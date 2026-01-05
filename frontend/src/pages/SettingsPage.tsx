@@ -1,0 +1,239 @@
+import React from 'react';
+import { Header } from '@/components/layout/Header';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import {
+  Building2,
+  Bell,
+  Shield,
+  Database,
+  Mail,
+  Clock,
+  Save,
+  RefreshCw,
+} from 'lucide-react';
+import { toast } from 'sonner';
+
+export default function SettingsPage() {
+  const handleSave = () => {
+    toast.success('Settings saved successfully');
+  };
+
+  return (
+    <div className="min-h-screen">
+      <Header
+        title="System Settings"
+        subtitle="Configure system preferences and integrations"
+      />
+
+      <div className="p-6 space-y-6 max-w-4xl">
+        {/* Organization Settings */}
+        <div className="bg-card rounded-lg border border-border p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+              <Building2 className="w-5 h-5 text-accent" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Organization</h3>
+              <p className="text-sm text-muted-foreground">Basic organization settings</p>
+            </div>
+          </div>
+
+          <div className="grid gap-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Organization Name</Label>
+                <Input defaultValue="Pharma Industries Ltd." />
+              </div>
+              <div className="space-y-2">
+                <Label>Industry</Label>
+                <Input defaultValue="Pharmaceutical Manufacturing" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Address</Label>
+              <Input defaultValue="123 Industrial Park, Sector 7" />
+            </div>
+          </div>
+        </div>
+
+        {/* Notification Settings */}
+        <div className="bg-card rounded-lg border border-border p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+              <Bell className="w-5 h-5 text-accent" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Notifications</h3>
+              <p className="text-sm text-muted-foreground">Configure alert preferences</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">Email Alerts</p>
+                <p className="text-sm text-muted-foreground">Receive critical alerts via email</p>
+              </div>
+              <Switch defaultChecked />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">Calibration Reminders</p>
+                <p className="text-sm text-muted-foreground">Get notified 30 days before due date</p>
+              </div>
+              <Switch defaultChecked />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">Approval Notifications</p>
+                <p className="text-sm text-muted-foreground">Notify supervisors of pending approvals</p>
+              </div>
+              <Switch defaultChecked />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">Equipment Alerts</p>
+                <p className="text-sm text-muted-foreground">Alerts when readings exceed limits</p>
+              </div>
+              <Switch defaultChecked />
+            </div>
+          </div>
+        </div>
+
+        {/* Security Settings */}
+        <div className="bg-card rounded-lg border border-border p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+              <Shield className="w-5 h-5 text-accent" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Security</h3>
+              <p className="text-sm text-muted-foreground">Access and authentication settings</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">Two-Factor Authentication</p>
+                <p className="text-sm text-muted-foreground">Require 2FA for all users</p>
+              </div>
+              <Switch />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">Session Timeout</p>
+                <p className="text-sm text-muted-foreground">Auto logout after inactivity</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input type="number" defaultValue="30" className="w-20" />
+                <span className="text-sm text-muted-foreground">minutes</span>
+              </div>
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">Digital Signature Verification</p>
+                <p className="text-sm text-muted-foreground">Require signature for all entries</p>
+              </div>
+              <Switch defaultChecked />
+            </div>
+          </div>
+        </div>
+
+        {/* Data Settings */}
+        <div className="bg-card rounded-lg border border-border p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+              <Database className="w-5 h-5 text-accent" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Data Management</h3>
+              <p className="text-sm text-muted-foreground">Backup and retention settings</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">Auto Backup</p>
+                <p className="text-sm text-muted-foreground">Daily automatic backups</p>
+              </div>
+              <Switch defaultChecked />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">Data Retention Period</p>
+                <p className="text-sm text-muted-foreground">Keep records for compliance</p>
+              </div>
+              <Badge variant="accent">7 Years</Badge>
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-foreground">Last Backup</p>
+                <p className="text-sm text-muted-foreground">Most recent backup status</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge variant="success">Successful</Badge>
+                <span className="text-sm text-muted-foreground">Today 02:00</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Logging Intervals */}
+        <div className="bg-card rounded-lg border border-border p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+              <Clock className="w-5 h-5 text-accent" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-foreground">Logging Intervals</h3>
+              <p className="text-sm text-muted-foreground">Configure mandatory entry schedules</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>E Log Book Interval</Label>
+              <div className="flex items-center gap-2">
+                <Input type="number" defaultValue="2" className="w-20" />
+                <span className="text-sm text-muted-foreground">hours</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Chemical Log Interval</Label>
+              <div className="flex items-center gap-2">
+                <Input type="number" defaultValue="4" className="w-20" />
+                <span className="text-sm text-muted-foreground">hours</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-2">
+          <Button variant="outline">
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Reset to Defaults
+          </Button>
+          <Button variant="accent" onClick={handleSave}>
+            <Save className="w-4 h-4 mr-2" />
+            Save Settings
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
