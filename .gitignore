@@ -18,7 +18,13 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Python virtual environment lib directories only
+venv/lib/
+env/lib/
+.venv/lib/
+ENV/lib/
+env.bak/lib/
+venv.bak/lib/
 lib64/
 parts/
 sdist/
