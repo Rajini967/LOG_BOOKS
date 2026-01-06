@@ -47,6 +47,15 @@ import {
   downloadPDF,
   printPDF,
 } from '@/lib/pdf-generator';
+import {
+  reportsAPI,
+  chemicalPrepAPI,
+  chillerLogAPI,
+  boilerLogAPI,
+  compressorLogAPI,
+  hvacValidationAPI,
+  testCertificateAPI,
+} from '@/lib/api';
 
 interface Report {
   id: string;
@@ -87,156 +96,39 @@ const typeLabels = {
 
 export default function ReportsPage() {
   const { user } = useAuth();
-  // Load reports from localStorage (E Log Book entries and test certificates)
-  const loadReportsFromLocalStorage = useCallback(() => {
+  
+  // Load reports from centralized reports API
+  const loadReportsFromAPI = useCallback(async () => {
     try {
-      const reportsList: Report[] = [];
+      const reportsData = await reportsAPI.list();
       
-      // Load E Log Book entries
-      const utilityLogs = localStorage.getItem('e_log_book');
-      if (utilityLogs) {
-        const logs = JSON.parse(utilityLogs);
-        logs.forEach((log: any) => {
-          let title = '';
-          let site = log.equipmentId || 'N/A';
-          
-          if (log.equipmentType === 'chiller') {
-            title = `Chiller Monitoring - ${log.equipmentId || 'N/A'}`;
-          } else if (log.equipmentType === 'boiler') {
-            title = `Boiler Monitoring - ${log.equipmentId || 'N/A'}`;
-          } else if (log.equipmentType === 'compressor') {
-            title = `Air Compressor Monitoring - ${log.equipmentId || 'N/A'}`;
-          } else if (log.equipmentType === 'chemical') {
-            title = `${log.chemicalName || 'Chemical Preparation'} - ${log.equipmentName || 'N/A'}`;
-            site = log.equipmentName || 'N/A';
-          } else {
-            title = `${log.equipmentType} Monitoring - ${log.equipmentId || 'N/A'}`;
-          }
-          
-          reportsList.push({
-            id: log.id,
-            type: 'utility',
-            title: title,
-            site: site,
-            createdBy: log.checkedBy || 'Unknown',
-            createdAt: new Date(log.timestamp),
-            approvedBy: log.status === 'approved' ? log.checkedBy : undefined,
-            approvedAt: log.status === 'approved' ? new Date(log.timestamp) : undefined,
-            status: log.status,
-            remarks: log.remarks,
-            originalData: log,
-          });
-        });
-      }
-      
-      // Load Air Velocity Tests
-      const airVelocityTests = localStorage.getItem('air_velocity_tests');
-      if (airVelocityTests) {
-        const tests = JSON.parse(airVelocityTests);
-        tests.forEach((test: any) => {
-          reportsList.push({
-            id: test.id,
-            type: 'air_velocity',
-            title: `Air Velocity Test - ${test.certificateNo}`,
-            site: test.ahuNumber || 'N/A',
-            createdBy: test.preparedBy || 'Unknown',
-            createdAt: new Date(test.timestamp),
-            approvedBy: test.status === 'approved' ? test.approvedBy : undefined,
-            approvedAt: test.status === 'approved' && test.approvedBy ? new Date(test.timestamp) : undefined,
-            status: test.status,
-            originalData: test,
-          });
-        });
-      }
-      
-      // Load Filter Integrity Tests
-      const filterIntegrityTests = localStorage.getItem('filter_integrity_tests');
-      if (filterIntegrityTests) {
-        const tests = JSON.parse(filterIntegrityTests);
-        tests.forEach((test: any) => {
-          reportsList.push({
-            id: test.id,
-            type: 'filter_integrity',
-            title: `Filter Integrity Test - ${test.certificateNo}`,
-            site: test.ahuNumber || 'N/A',
-            createdBy: test.preparedBy || 'Unknown',
-            createdAt: new Date(test.timestamp),
-            approvedBy: test.status === 'approved' ? test.approvedBy : undefined,
-            approvedAt: test.status === 'approved' && test.approvedBy ? new Date(test.timestamp) : undefined,
-            status: test.status,
-            originalData: test,
-          });
-        });
-      }
-      
-      // Load Recovery Tests
-      const recoveryTests = localStorage.getItem('recovery_tests');
-      if (recoveryTests) {
-        const tests = JSON.parse(recoveryTests);
-        tests.forEach((test: any) => {
-          reportsList.push({
-            id: test.id,
-            type: 'recovery',
-            title: `Recovery Test - ${test.certificateNo}`,
-            site: test.ahuNumber || 'N/A',
-            createdBy: test.preparedBy || 'Unknown',
-            createdAt: new Date(test.timestamp),
-            approvedBy: test.status === 'approved' ? test.approvedBy : undefined,
-            approvedAt: test.status === 'approved' && test.approvedBy ? new Date(test.timestamp) : undefined,
-            status: test.status,
-            originalData: test,
-          });
-        });
-      }
-      
-      // Load Differential Pressure Tests
-      const differentialPressureTests = localStorage.getItem('differential_pressure_tests');
-      if (differentialPressureTests) {
-        const tests = JSON.parse(differentialPressureTests);
-        tests.forEach((test: any) => {
-          reportsList.push({
-            id: test.id,
-            type: 'differential_pressure',
-            title: `Differential Pressure Test - ${test.certificateNo}`,
-            site: test.ahuNumber || 'N/A',
-            createdBy: test.preparedBy || 'Unknown',
-            createdAt: new Date(test.timestamp),
-            approvedBy: test.status === 'approved' ? test.approvedBy : undefined,
-            approvedAt: test.status === 'approved' && test.approvedBy ? new Date(test.timestamp) : undefined,
-            status: test.status,
-            originalData: test,
-          });
-        });
-      }
-      
-      // Load NVPC Tests
-      const nvpcTests = localStorage.getItem('nvpc_tests');
-      if (nvpcTests) {
-        const tests = JSON.parse(nvpcTests);
-        tests.forEach((test: any) => {
-          reportsList.push({
-            id: test.id,
-            type: 'nvpc',
-            title: `NVPC Test - ${test.certificateNo}`,
-            site: test.ahuNumber || 'N/A',
-            createdBy: test.preparedBy || 'Unknown',
-            createdAt: new Date(test.timestamp),
-            approvedBy: test.status === 'approved' ? test.approvedBy : undefined,
-            approvedAt: test.status === 'approved' && test.approvedBy ? new Date(test.timestamp) : undefined,
-            status: test.status,
-            originalData: test,
-          });
-        });
-      }
+      // Transform API response to Report format
+      const reportsList: Report[] = reportsData.map((report: any) => ({
+        id: report.id,
+        type: report.report_type,
+        title: report.title,
+        site: report.site,
+        createdBy: report.created_by,
+        createdAt: new Date(report.created_at),
+        approvedBy: report.approved_by_name || undefined,
+        approvedAt: report.approved_at ? new Date(report.approved_at) : undefined,
+        status: 'approved' as const, // All reports in this table are approved
+        remarks: report.remarks,
+        originalData: {
+          sourceId: report.source_id,
+          sourceTable: report.source_table,
+        },
+      }));
       
       return reportsList;
     } catch (error) {
-      console.error('Error loading reports from localStorage:', error);
+      console.error('Error loading reports from API:', error);
+      toast.error('Failed to load reports');
       return [];
     }
   }, []);
 
-  const [reports, setReports] = useState<Report[]>(() => loadReportsFromLocalStorage());
+  const [reports, setReports] = useState<Report[]>([]);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [isApprovalDialogOpen, setIsApprovalDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
@@ -245,20 +137,20 @@ export default function ReportsPage() {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedReports, setSelectedReports] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   const isSupervisor = user?.role === 'supervisor' || user?.role === 'super_admin';
   const isCustomer = user?.role === 'customer';
 
   const filteredReports = reports.filter(report => {
+    // Only show approved reports
+    if (report.status !== 'approved') return false;
+    
     const matchesType = filterType === 'all' || report.type === filterType;
-    const matchesStatus = filterStatus === 'all' || report.status === filterStatus;
     const matchesSearch = report.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          report.id.toLowerCase().includes(searchQuery.toLowerCase());
     
-    // Customers only see approved reports
-    if (isCustomer && report.status !== 'approved') return false;
-    
-    return matchesType && matchesStatus && matchesSearch;
+    return matchesType && matchesSearch;
   });
 
   // Check if all visible reports are selected
@@ -293,172 +185,379 @@ export default function ReportsPage() {
     }
   };
 
-  // Sync reports with localStorage
+  // Load reports from API on mount and refresh periodically
   useEffect(() => {
-    const reportsList = loadReportsFromLocalStorage();
-    setReports(reportsList);
-    
-    // Listen for changes in localStorage from other tabs/windows
-    const handleStorageChange = (event: StorageEvent) => {
-      if (
-        event.key === 'e_log_book' ||
-        event.key === 'air_velocity_tests' ||
-        event.key === 'filter_integrity_tests' ||
-        event.key === 'recovery_tests' ||
-        event.key === 'differential_pressure_tests' ||
-        event.key === 'nvpc_tests'
-      ) {
-        const reportsList = loadReportsFromLocalStorage();
-        setReports(reportsList);
-      }
-    };
-    window.addEventListener('storage', handleStorageChange);
-    
-    // Also refresh when window gains focus
-    const handleFocus = () => {
-      const reportsList = loadReportsFromLocalStorage();
+    const fetchReports = async () => {
+      setIsLoading(true);
+      const reportsList = await loadReportsFromAPI();
       setReports(reportsList);
+      setIsLoading(false);
     };
-    window.addEventListener('focus', handleFocus);
     
-    // Poll periodically to ensure fresh data
-    const intervalId = setInterval(() => {
-      const reportsList = loadReportsFromLocalStorage();
-      setReports(reportsList);
-    }, 2000); // Every 2 seconds
+    fetchReports();
+    
+    // Refresh every 30 seconds to keep data fresh
+    const intervalId = setInterval(fetchReports, 30000);
     
     return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('focus', handleFocus);
       clearInterval(intervalId);
     };
-  }, [loadReportsFromLocalStorage]);
+  }, [loadReportsFromAPI]);
 
 
-  const handleApprove = () => {
+  const handleApprove = async () => {
     if (!selectedReport) return;
     
-    // Update the report status
-    const updatedReports = reports.map(r => 
-      r.id === selectedReport.id 
-        ? { ...r, status: 'approved' as const, approvedBy: user?.name || user?.email, approvedAt: new Date(), remarks: approvalRemarks }
-        : r
-    );
-    setReports(updatedReports);
-    
-    // Update the corresponding localStorage entry
     try {
+      // Call API to approve the report
       if (selectedReport.type === 'utility') {
-        const utilityLogs = localStorage.getItem('e_log_book');
-        if (utilityLogs) {
-          const logs = JSON.parse(utilityLogs);
-          const updatedLogs = logs.map((log: any) => 
-            log.id === selectedReport.id
-              ? { ...log, status: 'approved', remarks: approvalRemarks || log.remarks }
-              : log
-          );
-          localStorage.setItem('e_log_book', JSON.stringify(updatedLogs));
+        const log = selectedReport.originalData;
+        if (log.equipmentType === 'chiller') {
+          await chillerLogAPI.approve(selectedReport.id, 'approve', approvalRemarks);
+        } else if (log.equipmentType === 'boiler') {
+          await boilerLogAPI.approve(selectedReport.id, 'approve', approvalRemarks);
+        } else if (log.equipmentType === 'compressor') {
+          await compressorLogAPI.approve(selectedReport.id, 'approve', approvalRemarks);
+        } else if (log.equipmentType === 'chemical') {
+          await chemicalPrepAPI.approve(selectedReport.id, 'approve', approvalRemarks);
         }
+      } else if (selectedReport.type === 'validation') {
+        await hvacValidationAPI.approve(selectedReport.id, 'approve', approvalRemarks);
       } else {
         // Handle test certificates
-        const storageKeys: Record<string, string> = {
-          'air_velocity': 'air_velocity_tests',
-          'filter_integrity': 'filter_integrity_tests',
-          'recovery': 'recovery_tests',
-          'differential_pressure': 'differential_pressure_tests',
-          'nvpc': 'nvpc_tests',
+        const approveMap: Record<string, (id: string, action: string, remarks?: string) => Promise<any>> = {
+          air_velocity: (id, action, remarks) => testCertificateAPI.airVelocity.approve(id, action as 'approve' | 'reject', remarks),
+          filter_integrity: (id, action, remarks) => testCertificateAPI.filterIntegrity.approve(id, action as 'approve' | 'reject', remarks),
+          recovery: (id, action, remarks) => testCertificateAPI.recovery.approve(id, action as 'approve' | 'reject', remarks),
+          differential_pressure: (id, action, remarks) => testCertificateAPI.differentialPressure.approve(id, action as 'approve' | 'reject', remarks),
+          nvpc: (id, action, remarks) => testCertificateAPI.nvpc.approve(id, action as 'approve' | 'reject', remarks),
         };
-        const storageKey = storageKeys[selectedReport.type];
-        if (storageKey) {
-          const tests = localStorage.getItem(storageKey);
-          if (tests) {
-            const testList = JSON.parse(tests);
-            const updatedTests = testList.map((test: any) => 
-              test.id === selectedReport.id
-                ? { ...test, status: 'approved', approvedBy: user?.name || user?.email }
-                : test
-            );
-            localStorage.setItem(storageKey, JSON.stringify(updatedTests));
-          }
+        const approveFn = approveMap[selectedReport.type];
+        if (approveFn) {
+          await approveFn(selectedReport.id, 'approve', approvalRemarks);
         }
       }
-    } catch (error) {
-      console.error('Error updating localStorage:', error);
+      
+      // Refresh reports from API
+      const reportsList = await loadReportsFromAPI();
+      setReports(reportsList);
+      
+      setIsApprovalDialogOpen(false);
+      setSelectedReport(null);
+      setApprovalRemarks('');
+      toast.success('Report approved successfully');
+    } catch (error: any) {
+      console.error('Error approving report:', error);
+      toast.error(error?.message || 'Failed to approve report');
     }
-    
-    setIsApprovalDialogOpen(false);
-    setSelectedReport(null);
-    setApprovalRemarks('');
-    toast.success('Report approved and moved to approved folder');
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (!selectedReport || !approvalRemarks) {
       toast.error('Please provide remarks for rejection');
       return;
     }
     
-    // Update the report status
-    const updatedReports = reports.map(r => 
-      r.id === selectedReport.id 
-        ? { ...r, status: 'rejected' as const, remarks: approvalRemarks }
-        : r
-    );
-    setReports(updatedReports);
-    
-    // Update the corresponding localStorage entry
     try {
+      // Call API to reject the report
       if (selectedReport.type === 'utility') {
-        const utilityLogs = localStorage.getItem('e_log_book');
-        if (utilityLogs) {
-          const logs = JSON.parse(utilityLogs);
-          const updatedLogs = logs.map((log: any) => 
-            log.id === selectedReport.id
-              ? { ...log, status: 'rejected', remarks: approvalRemarks }
-              : log
-          );
-          localStorage.setItem('e_log_book', JSON.stringify(updatedLogs));
+        const log = selectedReport.originalData;
+        if (log.equipmentType === 'chiller') {
+          await chillerLogAPI.approve(selectedReport.id, 'reject', approvalRemarks);
+        } else if (log.equipmentType === 'boiler') {
+          await boilerLogAPI.approve(selectedReport.id, 'reject', approvalRemarks);
+        } else if (log.equipmentType === 'compressor') {
+          await compressorLogAPI.approve(selectedReport.id, 'reject', approvalRemarks);
+        } else if (log.equipmentType === 'chemical') {
+          await chemicalPrepAPI.approve(selectedReport.id, 'reject', approvalRemarks);
         }
+      } else if (selectedReport.type === 'validation') {
+        await hvacValidationAPI.approve(selectedReport.id, 'reject', approvalRemarks);
       } else {
         // Handle test certificates
-        const storageKeys: Record<string, string> = {
-          'air_velocity': 'air_velocity_tests',
-          'filter_integrity': 'filter_integrity_tests',
-          'recovery': 'recovery_tests',
-          'differential_pressure': 'differential_pressure_tests',
-          'nvpc': 'nvpc_tests',
+        const approveMap: Record<string, (id: string, action: string, remarks?: string) => Promise<any>> = {
+          air_velocity: (id, action, remarks) => testCertificateAPI.airVelocity.approve(id, action as 'approve' | 'reject', remarks),
+          filter_integrity: (id, action, remarks) => testCertificateAPI.filterIntegrity.approve(id, action as 'approve' | 'reject', remarks),
+          recovery: (id, action, remarks) => testCertificateAPI.recovery.approve(id, action as 'approve' | 'reject', remarks),
+          differential_pressure: (id, action, remarks) => testCertificateAPI.differentialPressure.approve(id, action as 'approve' | 'reject', remarks),
+          nvpc: (id, action, remarks) => testCertificateAPI.nvpc.approve(id, action as 'approve' | 'reject', remarks),
         };
-        const storageKey = storageKeys[selectedReport.type];
-        if (storageKey) {
-          const tests = localStorage.getItem(storageKey);
-          if (tests) {
-            const testList = JSON.parse(tests);
-            const updatedTests = testList.map((test: any) => 
-              test.id === selectedReport.id
-                ? { ...test, status: 'rejected' }
-                : test
-            );
-            localStorage.setItem(storageKey, JSON.stringify(updatedTests));
-          }
+        const approveFn = approveMap[selectedReport.type];
+        if (approveFn) {
+          await approveFn(selectedReport.id, 'reject', approvalRemarks);
         }
       }
-    } catch (error) {
-      console.error('Error updating localStorage:', error);
+      
+      // Refresh reports from API
+      const reportsList = await loadReportsFromAPI();
+      setReports(reportsList);
+      
+      setIsApprovalDialogOpen(false);
+      setSelectedReport(null);
+      setApprovalRemarks('');
+      toast.error('Report rejected');
+    } catch (error: any) {
+      console.error('Error rejecting report:', error);
+      toast.error(error?.message || 'Failed to reject report');
     }
-    
-    setIsApprovalDialogOpen(false);
-    setSelectedReport(null);
-    setApprovalRemarks('');
-    toast.error('Report rejected');
   };
 
-  const handleView = (report: Report) => {
-    setSelectedReport(report);
+  // Helper function to fetch full data from original source
+  const fetchFullReportData = useCallback(async (report: Report): Promise<any> => {
+    const { sourceId, sourceTable } = report.originalData || {};
+    if (!sourceId || !sourceTable) return null;
+
+    try {
+      // Map source table names to API functions
+      const apiMap: Record<string, (id: string) => Promise<any>> = {
+        'chiller_logs': (id) => chillerLogAPI.get(id),
+        'boiler_logs': (id) => boilerLogAPI.get(id),
+        'compressor_logs': (id) => compressorLogAPI.get(id),
+        'chemical_preparations': (id) => chemicalPrepAPI.get(id),
+        'hvac_validations': (id) => hvacValidationAPI.get(id),
+        'air_velocity_tests': (id) => testCertificateAPI.airVelocity.get(id),
+        'filter_integrity_tests': (id) => testCertificateAPI.filterIntegrity.get(id),
+        'recovery_tests': (id) => testCertificateAPI.recovery.get(id),
+        'differential_pressure_tests': (id) => testCertificateAPI.differentialPressure.get(id),
+        'nvpc_tests': (id) => testCertificateAPI.nvpc.get(id),
+      };
+
+      const fetchFn = apiMap[sourceTable];
+      if (!fetchFn) {
+        console.error(`Unknown source table: ${sourceTable}`);
+        return null;
+      }
+
+      const data = await fetchFn(sourceId);
+      
+      // Transform data based on source table
+      if (sourceTable === 'chiller_logs') {
+        return { ...data, equipmentType: 'chiller' };
+      } else if (sourceTable === 'boiler_logs') {
+        return { ...data, equipmentType: 'boiler' };
+      } else if (sourceTable === 'compressor_logs') {
+        return { ...data, equipmentType: 'compressor' };
+      } else if (sourceTable === 'chemical_preparations') {
+        return { ...data, equipmentType: 'chemical' };
+      } else if (sourceTable === 'air_velocity_tests') {
+        // Transform air velocity test data
+        return {
+          id: data.id,
+          clientInfo: { name: data.client_name, address: data.client_address },
+          certificateNo: data.certificate_no,
+          date: data.date,
+          testReference: data.test_reference || '',
+          instrument: {
+            name: data.instrument_name,
+            make: data.instrument_make,
+            model: data.instrument_model,
+            serialNumber: data.instrument_serial_number,
+            idNumber: data.instrument_id_number || undefined,
+            calibrationDate: data.instrument_calibration_date || '',
+            calibrationDueDate: data.instrument_calibration_due_date || '',
+            flowRate: data.instrument_flow_rate || undefined,
+            samplingTime: data.instrument_sampling_time || undefined,
+          },
+          ahuNumber: data.ahu_number,
+          inference: data.inference || undefined,
+          rooms: data.rooms?.map((room: any) => ({
+            roomName: room.room_name,
+            roomNumber: room.room_number || undefined,
+            filters: room.filters?.map((filter: any) => ({
+              filterId: filter.filter_id,
+              filterArea: filter.filter_area,
+              readings: [
+                filter.reading_1,
+                filter.reading_2,
+                filter.reading_3,
+                filter.reading_4,
+                filter.reading_5,
+              ] as [number, number, number, number, number],
+              avgVelocity: filter.avg_velocity,
+              airFlowCFM: filter.air_flow_cfm,
+            })) || [],
+            totalAirFlowCFM: room.total_air_flow_cfm,
+            roomVolumeCFT: room.room_volume_cft,
+            ach: room.ach,
+            designACPH: room.design_acph || undefined,
+          })) || [],
+          preparedBy: data.prepared_by,
+          approvedBy: data.approved_by_id ? data.operator_name : undefined,
+          timestamp: new Date(data.timestamp),
+          status: data.status as 'pending' | 'approved' | 'rejected',
+        };
+      } else if (sourceTable === 'filter_integrity_tests') {
+        return {
+          id: data.id,
+          clientInfo: { name: data.client_name, address: data.client_address },
+          certificateNo: data.certificate_no,
+          date: data.date,
+          testReference: data.test_reference || '',
+          instrument: {
+            name: data.instrument_name,
+            make: data.instrument_make,
+            model: data.instrument_model,
+            serialNumber: data.instrument_serial_number,
+            idNumber: data.instrument_id_number || undefined,
+            calibrationDate: data.instrument_calibration_date || '',
+            calibrationDueDate: data.instrument_calibration_due_date || '',
+            flowRate: data.instrument_flow_rate || undefined,
+            samplingTime: data.instrument_sampling_time || undefined,
+          },
+          ahuNumber: data.ahu_number,
+          inference: data.inference,
+          rooms: data.rooms?.map((room: any) => ({
+            roomName: room.room_name,
+            roomNumber: room.room_number || undefined,
+            readings: room.readings?.map((reading: any) => ({
+              filterId: reading.filter_id,
+              upstreamConcentration: reading.upstream_concentration,
+              aerosolConcentration: reading.aerosol_concentration,
+              downstreamConcentration: reading.downstream_concentration,
+              downstreamLeakage: reading.downstream_leakage,
+              acceptableLimit: reading.acceptable_limit,
+              testStatus: reading.test_status,
+            })) || [],
+          })) || [],
+          preparedBy: data.prepared_by,
+          approvedBy: data.approved_by_id ? data.operator_name : undefined,
+          timestamp: new Date(data.timestamp),
+          status: data.status as 'pending' | 'approved' | 'rejected',
+        };
+      } else if (sourceTable === 'recovery_tests') {
+        return {
+          id: data.id,
+          clientInfo: { name: data.client_name, address: data.client_address },
+          certificateNo: data.certificate_no,
+          date: data.date,
+          areaClassification: data.area_classification,
+          instrument: {
+            name: data.instrument_name,
+            make: data.instrument_make,
+            model: data.instrument_model,
+            serialNumber: data.instrument_serial_number,
+            idNumber: data.instrument_id_number || undefined,
+            calibrationDate: data.instrument_calibration_date || '',
+            calibrationDueDate: data.instrument_calibration_due_date || '',
+            flowRate: data.instrument_flow_rate || undefined,
+            samplingTime: data.instrument_sampling_time || undefined,
+          },
+          ahuNumber: data.ahu_number,
+          roomName: data.room_name || undefined,
+          roomNumber: data.room_number || undefined,
+          testCondition: data.test_condition || undefined,
+          timeSeries: data.data_points?.map((dp: any) => ({
+            time: dp.time,
+            ahuStatus: dp.ahu_status as 'ON' | 'OFF',
+            particleCount05: dp.particle_count_05,
+            particleCount5: dp.particle_count_5,
+          })) || [],
+          recoveryTime: data.recovery_time,
+          testStatus: data.test_status as 'PASS' | 'FAIL' | undefined,
+          auditStatement: data.audit_statement || undefined,
+          preparedBy: data.prepared_by,
+          approvedBy: data.approved_by_id ? data.operator_name : undefined,
+          timestamp: new Date(data.timestamp),
+          status: data.status as 'pending' | 'approved' | 'rejected',
+        };
+      } else if (sourceTable === 'differential_pressure_tests') {
+        return {
+          id: data.id,
+          clientInfo: { name: data.client_name, address: data.client_address },
+          certificateNo: data.certificate_no,
+          date: data.date,
+          instrument: {
+            name: data.instrument_name,
+            make: data.instrument_make,
+            model: data.instrument_model,
+            serialNumber: data.instrument_serial_number,
+            idNumber: data.instrument_id_number || undefined,
+            calibrationDate: data.instrument_calibration_date || '',
+            calibrationDueDate: data.instrument_calibration_due_date || '',
+            flowRate: data.instrument_flow_rate || undefined,
+            samplingTime: data.instrument_sampling_time || undefined,
+          },
+          ahuNumber: data.ahu_number,
+          readings: data.readings?.map((reading: any) => ({
+            roomPositive: reading.room_positive,
+            roomNegative: reading.room_negative,
+            dpReading: reading.dp_reading,
+            limit: reading.limit,
+            testStatus: reading.test_status,
+          })) || [],
+          preparedBy: data.prepared_by,
+          approvedBy: data.approved_by_id ? data.operator_name : undefined,
+          timestamp: new Date(data.timestamp),
+          status: data.status as 'pending' | 'approved' | 'rejected',
+        };
+      } else if (sourceTable === 'nvpc_tests') {
+        return {
+          id: data.id,
+          clientInfo: { name: data.client_name, address: data.client_address },
+          certificateNo: data.certificate_no,
+          date: data.date,
+          areaClassification: data.area_classification,
+          instrument: {
+            name: data.instrument_name,
+            make: data.instrument_make,
+            model: data.instrument_model,
+            serialNumber: data.instrument_serial_number,
+            idNumber: data.instrument_id_number || undefined,
+            calibrationDate: data.instrument_calibration_date || '',
+            calibrationDueDate: data.instrument_calibration_due_date || '',
+            flowRate: data.instrument_flow_rate || undefined,
+            samplingTime: data.instrument_sampling_time || undefined,
+          },
+          ahuNumber: data.ahu_number,
+          areaName: data.area_name || undefined,
+          inference: data.inference || undefined,
+          rooms: data.rooms?.map((room: any) => ({
+            roomName: room.room_name,
+            roomNumber: room.room_number || undefined,
+            isoClass: room.iso_class || undefined,
+            mean05: room.mean_05 || undefined,
+            mean5: room.mean_5 || undefined,
+            roomStatus: room.room_status || undefined,
+            samplingPoints: room.sampling_points?.map((point: any) => ({
+              pointId: point.point_id,
+              location: point.location,
+              readings05: point.readings_05 || [],
+              readings5: point.readings_5 || [],
+              average05: point.average_05,
+              average5: point.average_5,
+              limit05: point.limit_05,
+              limit5: point.limit_5,
+              testStatus: point.test_status,
+            })) || [],
+          })) || [],
+          preparedBy: data.prepared_by,
+          approvedBy: data.approved_by_id ? data.operator_name : undefined,
+          timestamp: new Date(data.timestamp),
+          status: data.status as 'pending' | 'approved' | 'rejected',
+        };
+      }
+      
+      return data;
+    } catch (error) {
+      console.error(`Error fetching full data for ${sourceTable}:`, error);
+      return null;
+    }
+  }, []);
+
+  const handleView = async (report: Report) => {
+    // Fetch full data for viewing
+    const fullData = await fetchFullReportData(report);
+    setSelectedReport({ ...report, originalData: fullData });
     setIsViewDialogOpen(true);
   };
 
   const handleExport = async (report: Report) => {
-    const log = report.originalData;
+    // Fetch full data from original source
+    const log = await fetchFullReportData(report);
+    if (!log) {
+      toast.error('Failed to load report data');
+      return;
+    }
     
     // For test certificates, generate PDF with specific filename format
     if (report.type === 'air_velocity' && log) {
@@ -553,28 +652,71 @@ export default function ReportsPage() {
     // For utility reports (chiller, boiler, chemical), generate PDF with all logs
     if (report.type === 'utility' && log) {
       try {
-        // Get all logs of the same equipment type
-        const utilityLogs = localStorage.getItem('e_log_book');
-        if (utilityLogs) {
-          const allLogs = JSON.parse(utilityLogs);
-          const filteredLogs = allLogs.filter((l: any) => l.equipmentType === log.equipmentType);
-          
-          if (log.equipmentType === 'chiller') {
-            const blob = await generateChillerMonitoringPDF({ logs: filteredLogs });
-            downloadPDF(blob, 'Chiller Monitoring.pdf');
-            toast.success('PDF generated successfully');
-            return;
-          } else if (log.equipmentType === 'boiler') {
-            const blob = await generateBoilerMonitoringPDF({ logs: filteredLogs });
-            downloadPDF(blob, 'Boiler Monitoring.pdf');
-            toast.success('PDF generated successfully');
-            return;
-          } else if (log.equipmentType === 'chemical') {
-            const blob = await generateChemicalMonitoringPDF({ logs: filteredLogs });
-            downloadPDF(blob, 'Chemical Monitoring.pdf');
-            toast.success('PDF generated successfully');
-            return;
-          }
+        // Fetch all logs of the same equipment type from API
+        let allLogs: any[] = [];
+        
+        if (log.equipmentType === 'chiller') {
+          const chillerLogs = await chillerLogAPI.list();
+          allLogs = chillerLogs.map((l: any) => ({
+            id: l.id,
+            equipmentType: 'chiller',
+            equipmentId: l.equipment_id,
+            chillerSupplyTemp: l.chiller_supply_temp,
+            chillerReturnTemp: l.chiller_return_temp,
+            coolingTowerSupplyTemp: l.cooling_tower_supply_temp,
+            coolingTowerReturnTemp: l.cooling_tower_return_temp,
+            ctDifferentialTemp: l.ct_differential_temp,
+            chillerWaterInletPressure: l.chiller_water_inlet_pressure,
+            chillerMakeupWaterFlow: l.chiller_makeup_water_flow,
+            remarks: l.remarks,
+            checkedBy: l.operator_name,
+            timestamp: new Date(l.timestamp),
+            status: l.status,
+          }));
+          const blob = await generateChillerMonitoringPDF({ logs: allLogs });
+          downloadPDF(blob, 'Chiller Monitoring.pdf');
+          toast.success('PDF generated successfully');
+          return;
+        } else if (log.equipmentType === 'boiler') {
+          const boilerLogs = await boilerLogAPI.list();
+          allLogs = boilerLogs.map((l: any) => ({
+            id: l.id,
+            equipmentType: 'boiler',
+            equipmentId: l.equipment_id,
+            feedWaterTemp: l.feed_water_temp,
+            oilTemp: l.oil_temp,
+            steamTemp: l.steam_temp,
+            steamPressure: l.steam_pressure,
+            steamFlowLPH: l.steam_flow_lph,
+            remarks: l.remarks,
+            checkedBy: l.operator_name,
+            timestamp: new Date(l.timestamp),
+            status: l.status,
+          }));
+          const blob = await generateBoilerMonitoringPDF({ logs: allLogs });
+          downloadPDF(blob, 'Boiler Monitoring.pdf');
+          toast.success('PDF generated successfully');
+          return;
+        } else if (log.equipmentType === 'chemical') {
+          const chemicalPreps = await chemicalPrepAPI.list();
+          allLogs = chemicalPreps.map((l: any) => ({
+            id: l.id,
+            equipmentType: 'chemical',
+            equipmentName: l.equipment_name,
+            chemicalName: l.chemical_name,
+            chemicalPercent: l.chemical_percent,
+            solutionConcentration: l.solution_concentration,
+            waterQty: l.water_qty,
+            chemicalQty: l.chemical_qty,
+            remarks: l.remarks,
+            checkedBy: l.checked_by || l.operator_name,
+            timestamp: new Date(l.timestamp),
+            status: l.status,
+          }));
+          const blob = await generateChemicalMonitoringPDF({ logs: allLogs });
+          downloadPDF(blob, 'Chemical Monitoring.pdf');
+          toast.success('PDF generated successfully');
+          return;
         }
       } catch (error) {
         console.error('Error generating PDF:', error);
@@ -704,7 +846,12 @@ export default function ReportsPage() {
   };
 
   const handlePrint = async (report: Report) => {
-    const log = report.originalData;
+    // Fetch full data from original source
+    const log = await fetchFullReportData(report);
+    if (!log) {
+      toast.error('Failed to load report data');
+      return;
+    }
     
     // For test certificates, generate PDF and open print dialog directly
     if (report.type === 'air_velocity' && log) {
@@ -795,40 +942,83 @@ export default function ReportsPage() {
     // For utility reports (chiller, boiler, chemical), generate PDF with all logs
     if (report.type === 'utility' && log) {
       try {
-        // Get all logs of the same equipment type
-        const utilityLogs = localStorage.getItem('e_log_book');
-        if (utilityLogs) {
-          const allLogs = JSON.parse(utilityLogs);
-          const filteredLogs = allLogs.filter((l: any) => l.equipmentType === log.equipmentType);
-          
-          if (log.equipmentType === 'chiller') {
-            const blob = await generateChillerMonitoringPDF({ logs: filteredLogs });
-            const success = printPDF(blob);
-            if (success) {
-              toast.success('Opening print dialog...');
-            } else {
-              toast.error('Please allow popups to print PDFs');
-            }
-            return;
-          } else if (log.equipmentType === 'boiler') {
-            const blob = await generateBoilerMonitoringPDF({ logs: filteredLogs });
-            const success = printPDF(blob);
-            if (success) {
-              toast.success('Opening print dialog...');
-            } else {
-              toast.error('Please allow popups to print PDFs');
-            }
-            return;
-          } else if (log.equipmentType === 'chemical') {
-            const blob = await generateChemicalMonitoringPDF({ logs: filteredLogs });
-            const success = printPDF(blob);
-            if (success) {
-              toast.success('Opening print dialog...');
-            } else {
-              toast.error('Please allow popups to print PDFs');
-            }
-            return;
+        // Fetch all logs of the same equipment type from API
+        let allLogs: any[] = [];
+        
+        if (log.equipmentType === 'chiller') {
+          const chillerLogs = await chillerLogAPI.list();
+          allLogs = chillerLogs.map((l: any) => ({
+            id: l.id,
+            equipmentType: 'chiller',
+            equipmentId: l.equipment_id,
+            chillerSupplyTemp: l.chiller_supply_temp,
+            chillerReturnTemp: l.chiller_return_temp,
+            coolingTowerSupplyTemp: l.cooling_tower_supply_temp,
+            coolingTowerReturnTemp: l.cooling_tower_return_temp,
+            ctDifferentialTemp: l.ct_differential_temp,
+            chillerWaterInletPressure: l.chiller_water_inlet_pressure,
+            chillerMakeupWaterFlow: l.chiller_makeup_water_flow,
+            remarks: l.remarks,
+            checkedBy: l.operator_name,
+            timestamp: new Date(l.timestamp),
+            status: l.status,
+          }));
+          const blob = await generateChillerMonitoringPDF({ logs: allLogs });
+          const success = printPDF(blob);
+          if (success) {
+            toast.success('Opening print dialog...');
+          } else {
+            toast.error('Please allow popups to print PDFs');
           }
+          return;
+        } else if (log.equipmentType === 'boiler') {
+          const boilerLogs = await boilerLogAPI.list();
+          allLogs = boilerLogs.map((l: any) => ({
+            id: l.id,
+            equipmentType: 'boiler',
+            equipmentId: l.equipment_id,
+            feedWaterTemp: l.feed_water_temp,
+            oilTemp: l.oil_temp,
+            steamTemp: l.steam_temp,
+            steamPressure: l.steam_pressure,
+            steamFlowLPH: l.steam_flow_lph,
+            remarks: l.remarks,
+            checkedBy: l.operator_name,
+            timestamp: new Date(l.timestamp),
+            status: l.status,
+          }));
+          const blob = await generateBoilerMonitoringPDF({ logs: allLogs });
+          const success = printPDF(blob);
+          if (success) {
+            toast.success('Opening print dialog...');
+          } else {
+            toast.error('Please allow popups to print PDFs');
+          }
+          return;
+        } else if (log.equipmentType === 'chemical') {
+          const chemicalPreps = await chemicalPrepAPI.list();
+          allLogs = chemicalPreps.map((l: any) => ({
+            id: l.id,
+            equipmentType: 'chemical',
+            equipmentName: l.equipment_name,
+            chemicalName: l.chemical_name,
+            chemicalPercent: l.chemical_percent,
+            solutionConcentration: l.solution_concentration,
+            waterQty: l.water_qty,
+            chemicalQty: l.chemical_qty,
+            remarks: l.remarks,
+            checkedBy: l.checked_by || l.operator_name,
+            timestamp: new Date(l.timestamp),
+            status: l.status,
+          }));
+          const blob = await generateChemicalMonitoringPDF({ logs: allLogs });
+          const success = printPDF(blob);
+          if (success) {
+            toast.success('Opening print dialog...');
+          } else {
+            toast.error('Please allow popups to print PDFs');
+          }
+          return;
         }
       } catch (error) {
         console.error('Error generating PDF:', error);
@@ -901,35 +1091,46 @@ export default function ReportsPage() {
     <div className="min-h-screen">
       <Header
         title="Reports"
-        subtitle={isCustomer ? 'View approved reports for your site' : 'Review, approve, and export reports'}
+        subtitle="View and export approved reports"
       />
 
       <div className="p-6 space-y-6">
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="metric-card">
-            <p className="data-label">Total Reports</p>
-            <p className="reading-display text-2xl">{reports.length}</p>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center">
+              <Clock className="w-8 h-8 mx-auto mb-2 animate-spin text-muted-foreground" />
+              <p className="text-muted-foreground">Loading reports...</p>
+            </div>
           </div>
-          <div className="metric-card">
-            <p className="data-label">Pending Review</p>
-            <p className="reading-display text-2xl text-warning">
-              {reports.filter(r => r.status === 'pending').length}
-            </p>
-          </div>
-          <div className="metric-card">
-            <p className="data-label">Approved</p>
-            <p className="reading-display text-2xl text-success">
-              {reports.filter(r => r.status === 'approved').length}
-            </p>
-          </div>
-          <div className="metric-card">
-            <p className="data-label">Rejected</p>
-            <p className="reading-display text-2xl text-danger">
-              {reports.filter(r => r.status === 'rejected').length}
-            </p>
-          </div>
-        </div>
+        ) : (
+          <>
+            {/* Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="metric-card">
+                <p className="data-label">Total Approved Reports</p>
+                <p className="reading-display text-2xl text-success">
+                  {reports.filter(r => r.status === 'approved').length}
+                </p>
+              </div>
+              <div className="metric-card">
+                <p className="data-label">E Log Book</p>
+                <p className="reading-display text-2xl">
+                  {reports.filter(r => r.status === 'approved' && r.type === 'utility').length}
+                </p>
+              </div>
+              <div className="metric-card">
+                <p className="data-label">Test Certificates</p>
+                <p className="reading-display text-2xl">
+                  {reports.filter(r => r.status === 'approved' && ['air_velocity', 'filter_integrity', 'recovery', 'differential_pressure', 'nvpc'].includes(r.type)).length}
+                </p>
+              </div>
+              <div className="metric-card">
+                <p className="data-label">HVAC Validations</p>
+                <p className="reading-display text-2xl">
+                  {reports.filter(r => r.status === 'approved' && r.type === 'validation').length}
+                </p>
+              </div>
+            </div>
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-4">
@@ -962,19 +1163,7 @@ export default function ReportsPage() {
               </SelectContent>
             </Select>
 
-            {!isCustomer && (
-              <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger className="w-[150px]">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="approved">Approved</SelectItem>
-                  <SelectItem value="rejected">Rejected</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
+            {/* Status filter removed - only approved reports are shown */}
           </div>
         </div>
 
@@ -1052,38 +1241,22 @@ export default function ReportsPage() {
                         >
                           <Eye className="w-4 h-4" />
                         </Button>
-                        {report.status === 'approved' && (
-                          <>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              onClick={() => handleExport(report)}
-                              title="Export Report"
-                            >
-                              <Download className="w-4 h-4" />
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="icon"
-                              onClick={() => handlePrint(report)}
-                              title="Print Report"
-                            >
-                              <Printer className="w-4 h-4" />
-                            </Button>
-                          </>
-                        )}
-                        {isSupervisor && report.status === 'pending' && (
-                          <Button
-                            variant="accent"
-                            size="sm"
-                            onClick={() => {
-                              setSelectedReport(report);
-                              setIsApprovalDialogOpen(true);
-                            }}
-                          >
-                            Review
-                          </Button>
-                        )}
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={() => handleExport(report)}
+                          title="Export Report"
+                        >
+                          <Download className="w-4 h-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => handlePrint(report)}
+                          title="Print Report"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -1232,6 +1405,8 @@ export default function ReportsPage() {
             )}
           </DialogContent>
         </Dialog>
+          </>
+        )}
       </div>
     </div>
   );

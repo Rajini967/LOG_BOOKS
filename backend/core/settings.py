@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'compressor_logs',
     'air_validation',
     'test_certificates',
+    'reports',
 ]
 
 MIDDLEWARE = [

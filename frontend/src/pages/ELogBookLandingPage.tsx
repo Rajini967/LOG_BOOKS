@@ -1,10 +1,10 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
-import { Activity, Filter, Clock, Gauge, Wind } from 'lucide-react';
+import { Thermometer, Gauge, Droplets } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-interface TestModule {
+interface EquipmentModule {
   id: string;
   name: string;
   description: string;
@@ -13,62 +13,46 @@ interface TestModule {
   color: string;
 }
 
-const testModules: TestModule[] = [
+const equipmentModules: EquipmentModule[] = [
   {
-    id: 'air-velocity',
-    name: 'Air Velocity Test',
-    description: 'Measure air velocity and calculate air changes per hour',
-    path: '/hvac-validation/air-velocity-test',
-    icon: Activity,
+    id: 'chiller',
+    name: 'Chiller',
+    description: 'Monitor chiller temperature, pressure, and flow readings',
+    path: '/e-log-book/chiller',
+    icon: Thermometer,
     color: 'bg-blue-500',
   },
   {
-    id: 'filter-integrity',
-    name: 'Filter Integrity Test',
-    description: 'Test HEPA filter integrity and leakage',
-    path: '/hvac-validation/filter-integrity-test',
-    icon: Filter,
-    color: 'bg-green-500',
-  },
-  {
-    id: 'recovery',
-    name: 'Recovery Test',
-    description: 'Measure recovery time after contamination',
-    path: '/hvac-validation/recovery-test',
-    icon: Clock,
+    id: 'boiler',
+    name: 'Boiler',
+    description: 'Track boiler feed water, steam, and oil temperature',
+    path: '/e-log-book/boiler',
+    icon: Gauge,
     color: 'bg-orange-500',
   },
   {
-    id: 'differential-pressure',
-    name: 'Differential Pressure Test',
-    description: 'Measure pressure differentials between rooms',
-    path: '/hvac-validation/differential-pressure-test',
-    icon: Gauge,
-    color: 'bg-purple-500',
-  },
-  {
-    id: 'nvpc',
-    name: 'NVPC Test',
-    description: 'Non-Viable Particle Count test for cleanrooms',
-    path: '/hvac-validation/nvpc-test',
-    icon: Wind,
-    color: 'bg-teal-500',
+    id: 'chemical',
+    name: 'Chemical',
+    description: 'Manage chemical preparation and solution concentrations',
+    path: '/e-log-book/chemical',
+    icon: Droplets,
+    color: 'bg-green-500',
   },
 ];
 
-export default function HVACValidationPage() {
+export default function ELogBookLandingPage() {
   const navigate = useNavigate();
 
   return (
     <div className="min-h-screen">
       <Header
-        title="HVAC Validation Module"
-        subtitle="Select a test module to begin validation"
+        title="E Log Book"
+        subtitle="Select an equipment module to manage log entries"
       />
 
       <div className="p-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
-          {testModules.map((module) => {
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+          {equipmentModules.map((module) => {
             const IconComponent = module.icon;
             return (
               <button
@@ -114,3 +98,4 @@ export default function HVACValidationPage() {
     </div>
   );
 }
+

@@ -52,5 +52,21 @@ class HVACValidationViewSet(viewsets.ModelViewSet):
             validation.remarks = remarks
         validation.save()
         
+        # Create report entry when approved
+        if action_type == 'approve':
+            from reports.utils import create_report_entry
+            title = f"HVAC Validation - {validation.room_name or 'N/A'}"
+            create_report_entry(
+                report_type='validation',
+                source_id=str(validation.id),
+                source_table='hvac_validations',
+                title=title,
+                site=validation.room_name or 'N/A',
+                created_by=validation.operator_name or 'Unknown',
+                created_at=validation.created_at,
+                approved_by=request.user,
+                remarks=remarks
+            )
+        
         serializer = self.get_serializer(validation)
         return Response(serializer.data)

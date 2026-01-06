@@ -120,7 +120,11 @@ const chemicals = [
   { name: 'Antiscalant', stockConcentration: 100 },
 ];
 
-export default function ELogBookPage() {
+interface ELogBookPageProps {
+  equipmentType?: 'chiller' | 'boiler' | 'chemical';
+}
+
+export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) {
   const { user } = useAuth();
   const [logbookSchemas, setLogbookSchemas] = useState<LogbookSchema[]>([]);
   const [selectedSchema, setSelectedSchema] = useState<LogbookSchema | null>(null);
@@ -129,7 +133,7 @@ export default function ELogBookPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
-    equipmentType: '' as 'chiller' | 'boiler' | 'compressor' | 'chemical' | string,
+    equipmentType: (equipmentType || '') as 'chiller' | 'boiler' | 'compressor' | 'chemical' | string,
     equipmentId: '',
     // Chiller fields
     chillerSupplyTemp: '',
@@ -298,10 +302,16 @@ export default function ELogBookPage() {
           });
         });
 
+        // Filter by equipmentType if provided
+        let filteredLogs = allLogs;
+        if (equipmentType) {
+          filteredLogs = allLogs.filter(log => log.equipmentType === equipmentType);
+        }
+
         // Sort by timestamp (newest first)
-        allLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-        console.log('Total logs after conversion:', allLogs.length, allLogs);
-        setLogs(allLogs);
+        filteredLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        console.log('Total logs after conversion:', filteredLogs.length, filteredLogs);
+        setLogs(filteredLogs);
       } catch (error) {
         console.error('Error fetching data:', error);
         toast.error('Failed to load log entries');
@@ -449,9 +459,15 @@ export default function ELogBookPage() {
         });
       });
 
-      allLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-      console.log('Total logs after refresh:', allLogs.length, allLogs);
-      setLogs(allLogs);
+      // Filter by equipmentType if provided
+      let filteredLogs = allLogs;
+      if (equipmentType) {
+        filteredLogs = allLogs.filter(log => log.equipmentType === equipmentType);
+      }
+
+      filteredLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      console.log('Total logs after refresh:', filteredLogs.length, filteredLogs);
+      setLogs(filteredLogs);
     } catch (error) {
       console.error('Error refreshing logs:', error);
       toast.error('Failed to refresh log entries');
@@ -789,11 +805,25 @@ export default function ELogBookPage() {
     return false;
   };
 
+  const getTitle = () => {
+    if (equipmentType) {
+      return `${equipmentType.charAt(0).toUpperCase() + equipmentType.slice(1)} Log Book`;
+    }
+    return 'E Log Book';
+  };
+
+  const getSubtitle = () => {
+    if (equipmentType) {
+      return `Manage ${equipmentType} log entries`;
+    }
+    return 'Manual readings for Chillers and Boilers';
+  };
+
   return (
     <div className="min-h-screen">
       <Header
-        title="E Log Book"
-        subtitle="Manual readings for Chillers and Boilers"
+        title={getTitle()}
+        subtitle={getSubtitle()}
       />
 
       <div className="p-6 space-y-6">
@@ -869,21 +899,23 @@ export default function ELogBookPage() {
                     </Select>
                   </div>
 
-                  {/* Equipment Type */}
-                  <div className="space-y-3">
-                    <Label className="text-base font-semibold">Equipment Type</Label>
-                    <Select value={filters.equipmentType} onValueChange={(v) => setFilters({ ...filters, equipmentType: v })}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select equipment type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Types</SelectItem>
-                        <SelectItem value="chiller">Chiller</SelectItem>
-                        <SelectItem value="boiler">Boiler</SelectItem>
-                        <SelectItem value="chemical">Chemical</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {/* Equipment Type - Hide if equipmentType prop is provided */}
+                  {!equipmentType && (
+                    <div className="space-y-3">
+                      <Label className="text-base font-semibold">Equipment Type</Label>
+                      <Select value={filters.equipmentType} onValueChange={(v) => setFilters({ ...filters, equipmentType: v })}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select equipment type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Types</SelectItem>
+                          <SelectItem value="chiller">Chiller</SelectItem>
+                          <SelectItem value="boiler">Boiler</SelectItem>
+                          <SelectItem value="chemical">Chemical</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
 
                   {/* Equipment ID */}
                   <div className="space-y-3">
@@ -1014,6 +1046,7 @@ export default function ELogBookPage() {
                         });
                         setCustomFormData({});
                       }}
+                      disabled={!!equipmentType}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select type" />

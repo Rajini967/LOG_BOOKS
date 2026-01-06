@@ -22,6 +22,7 @@ interface Instrument {
   make: string;
   model: string;
   serialNumber: string;
+  ahuNumber?: string;
   idNumber?: string;
   calibrationDate: Date;
   calibrationDueDate: Date;
@@ -40,6 +41,7 @@ export default function InstrumentsPage() {
     make: '',
     model: '',
     serialNumber: '',
+    ahuNumber: '',
     idNumber: '',
     calibrationDate: '',
     calibrationDueDate: '',
@@ -111,6 +113,7 @@ export default function InstrumentsPage() {
       make: formData.make,
       model: formData.model,
       serialNumber: formData.serialNumber,
+      ahuNumber: formData.ahuNumber || undefined,
       idNumber: formData.idNumber || undefined,
       calibrationDate: calibDate,
       calibrationDueDate: dueDate,
@@ -125,6 +128,7 @@ export default function InstrumentsPage() {
       make: '',
       model: '',
       serialNumber: '',
+      ahuNumber: '',
       idNumber: '',
       calibrationDate: '',
       calibrationDueDate: '',
@@ -234,14 +238,24 @@ export default function InstrumentsPage() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label>Serial Number</Label>
-                  <Input
-                    value={formData.serialNumber}
-                    onChange={(e) => setFormData({ ...formData, serialNumber: e.target.value })}
-                    placeholder="e.g., TSI-2024-001"
-                    required
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>AHU Number</Label>
+                    <Input
+                      value={formData.ahuNumber}
+                      onChange={(e) => setFormData({ ...formData, ahuNumber: e.target.value })}
+                      placeholder="e.g., AHU-001"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Serial Number</Label>
+                    <Input
+                      value={formData.serialNumber}
+                      onChange={(e) => setFormData({ ...formData, serialNumber: e.target.value })}
+                      placeholder="e.g., TSI-2024-001"
+                      required
+                    />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">

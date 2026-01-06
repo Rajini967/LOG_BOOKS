@@ -723,5 +723,21 @@ export const testCertificateAPI = {
   },
 };
 
+// Reports API functions
+export const reportsAPI = {
+  list: async (params?: { type?: string }) => {
+    const response = await api.get('/reports/', { params });
+    if (response.data.results) {
+      return response.data.results;
+    }
+    return Array.isArray(response.data) ? response.data : [];
+  },
+
+  get: async (id: string) => {
+    const response = await api.get(`/reports/${id}/`);
+    return response.data;
+  },
+};
+
 export default api;
 

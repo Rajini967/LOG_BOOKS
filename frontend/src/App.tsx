@@ -7,6 +7,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
+import ELogBookLandingPage from "./pages/ELogBookLandingPage";
 import ELogBookPage from "./pages/ELogBookPage";
 import HVACValidationPage from "./pages/HVACValidationPage";
 import AirVelocityTestPage from "./pages/AirVelocityTestPage";
@@ -36,7 +37,10 @@ const App = () => (
             
             <Route element={<DashboardLayout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/e-log-book" element={<ELogBookPage />} />
+              <Route path="/e-log-book" element={<ELogBookLandingPage />} />
+              <Route path="/e-log-book/chiller" element={<ELogBookPage equipmentType="chiller" />} />
+              <Route path="/e-log-book/boiler" element={<ELogBookPage equipmentType="boiler" />} />
+              <Route path="/e-log-book/chemical" element={<ELogBookPage equipmentType="chemical" />} />
               <Route path="/hvac-validation" element={<HVACValidationPage />} />
               <Route path="/hvac-validation/air-velocity-test" element={<AirVelocityTestPage />} />
               <Route path="/hvac-validation/filter-integrity-test" element={<FilterIntegrityTestPage />} />

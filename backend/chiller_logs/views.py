@@ -52,5 +52,21 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
             log.remarks = remarks
         log.save()
         
+        # Create report entry when approved
+        if action_type == 'approve':
+            from reports.utils import create_report_entry
+            title = f"Chiller Monitoring - {log.equipment_id or 'N/A'}"
+            create_report_entry(
+                report_type='utility',
+                source_id=str(log.id),
+                source_table='chiller_logs',
+                title=title,
+                site=log.equipment_id or 'N/A',
+                created_by=log.operator_name or 'Unknown',
+                created_at=log.created_at,
+                approved_by=request.user,
+                remarks=remarks
+            )
+        
         serializer = self.get_serializer(log)
         return Response(serializer.data)

@@ -22,6 +22,8 @@ import {
   Filter,
   Clock,
   Activity,
+  Thermometer,
+  Droplets,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -51,12 +53,21 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [hvacExpanded, setHvacExpanded] = useState(false);
+  const [eLogBookExpanded, setELogBookExpanded] = useState(false);
 
   // Auto-expand HVAC section if any child route is active
   useEffect(() => {
     const isHvacChildActive = location.pathname.startsWith('/hvac-validation/');
     if (isHvacChildActive) {
       setHvacExpanded(true);
+    }
+  }, [location.pathname]);
+
+  // Auto-expand E Log Book section if any child route is active
+  useEffect(() => {
+    const isELogBookChildActive = location.pathname.startsWith('/e-log-book/');
+    if (isELogBookChildActive) {
+      setELogBookExpanded(true);
     }
   }, [location.pathname]);
 
@@ -78,6 +89,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     { path: '/hvac-validation/nvpc-test', icon: Activity, label: 'NVPC Test', roles: ['operator', 'supervisor', 'super_admin', 'manager'] },
   ];
 
+  const eLogBookItems = [
+    { path: '/e-log-book/chiller', icon: Thermometer, label: 'Chiller', roles: ['operator', 'supervisor', 'super_admin', 'manager'] },
+    { path: '/e-log-book/boiler', icon: Gauge, label: 'Boiler', roles: ['operator', 'supervisor', 'super_admin', 'manager'] },
+    { path: '/e-log-book/chemical', icon: Droplets, label: 'Chemical', roles: ['operator', 'supervisor', 'super_admin', 'manager'] },
+  ];
+
   const filteredItems = navItems.filter(
     (item) => user && item.roles.includes(user.role)
   );
@@ -86,7 +103,12 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     (item) => user && item.roles.includes(user.role)
   );
 
+  const filteredELogBookItems = eLogBookItems.filter(
+    (item) => user && item.roles.includes(user.role)
+  );
+
   const isHvacActive = location.pathname === '/hvac-validation' || location.pathname.startsWith('/hvac-validation/');
+  const isELogBookActive = location.pathname === '/e-log-book' || location.pathname.startsWith('/e-log-book/');
 
   return (
     <aside
@@ -178,24 +200,70 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           );
         })()}
 
-        {/* E Log Book */}
-        {user && navItems[2].roles.includes(user.role) && (() => {
-          const Icon = navItems[2].icon;
-          return (
-            <Link
-              to={navItems[2].path}
-              className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200',
-                location.pathname === navItems[2].path
-                  ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                  : 'text-sidebar-foreground hover:bg-sidebar-accent'
+        {/* E Log Book Section */}
+        {user && navItems[2].roles.includes(user.role) && (
+          <div className="space-y-1">
+            {/* E Log Book Parent */}
+            <div className="space-y-1">
+              <div className="relative">
+                <Link
+                  to="/e-log-book"
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200',
+                    isELogBookActive
+                      ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                      : 'text-sidebar-foreground hover:bg-sidebar-accent'
+                  )}
+                >
+                  <ClipboardList className="w-5 h-5 shrink-0" />
+                  {!collapsed && (
+                    <span className="text-sm font-medium flex-1">E Log Book</span>
+                  )}
+                </Link>
+                {!collapsed && (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setELogBookExpanded(!eLogBookExpanded);
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 hover:bg-sidebar-accent/50 rounded"
+                  >
+                    {eLogBookExpanded ? (
+                      <ChevronUp className="w-4 h-4" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4" />
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {/* E Log Book Sub-items */}
+              {!collapsed && eLogBookExpanded && filteredELogBookItems.length > 0 && (
+                <div className="ml-4 space-y-1 border-l border-sidebar-border pl-2">
+                  {filteredELogBookItems.map((item) => {
+                    const isActive = location.pathname === item.path;
+                    return (
+                      <Link
+                        key={item.path}
+                        to={item.path}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 text-sm',
+                          isActive
+                            ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                            : 'text-sidebar-foreground hover:bg-sidebar-accent'
+                        )}
+                      >
+                        <item.icon className="w-4 h-4 shrink-0" />
+                        <span className="font-medium">{item.label}</span>
+                      </Link>
+                    );
+                  })}
+                </div>
               )}
-            >
-              <Icon className="w-5 h-5 shrink-0" />
-              {!collapsed && <span className="text-sm font-medium">{navItems[2].label}</span>}
-            </Link>
-          );
-        })()}
+            </div>
+          </div>
+        )}
 
         {/* HVAC Validation Section */}
         {user && ['operator', 'supervisor', 'super_admin', 'manager'].includes(user.role) && (

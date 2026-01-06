@@ -52,5 +52,21 @@ class ChemicalPreparationViewSet(viewsets.ModelViewSet):
             prep.remarks = remarks
         prep.save()
         
+        # Create report entry when approved
+        if action_type == 'approve':
+            from reports.utils import create_report_entry
+            title = f"{prep.chemical_name or 'Chemical Preparation'} - {prep.equipment_name or 'N/A'}"
+            create_report_entry(
+                report_type='utility',
+                source_id=str(prep.id),
+                source_table='chemical_preparations',
+                title=title,
+                site=prep.equipment_name or 'N/A',
+                created_by=prep.checked_by or prep.operator_name or 'Unknown',
+                created_at=prep.created_at,
+                approved_by=request.user,
+                remarks=remarks
+            )
+        
         serializer = self.get_serializer(prep)
         return Response(serializer.data)

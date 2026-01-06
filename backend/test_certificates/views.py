@@ -64,6 +64,43 @@ class BaseTestCertificateViewSet(viewsets.ModelViewSet):
             test.remarks = remarks
         test.save()
         
+        # Create report entry when approved
+        if action_type == 'approve':
+            from reports.utils import create_report_entry
+            
+            # Determine report type and title based on test type
+            report_type_map = {
+                'AirVelocityTest': ('air_velocity', f"Air Velocity Test - {test.certificate_no}"),
+                'FilterIntegrityTest': ('filter_integrity', f"Filter Integrity Test - {test.certificate_no}"),
+                'RecoveryTest': ('recovery', f"Recovery Test - {test.certificate_no}"),
+                'DifferentialPressureTest': ('differential_pressure', f"Differential Pressure Test - {test.certificate_no}"),
+                'NVPCTest': ('nvpc', f"NVPC Test - {test.certificate_no}"),
+            }
+            
+            test_class_name = test.__class__.__name__
+            report_type, title = report_type_map.get(test_class_name, ('unknown', f"Test - {test.certificate_no}"))
+            
+            table_map = {
+                'AirVelocityTest': 'air_velocity_tests',
+                'FilterIntegrityTest': 'filter_integrity_tests',
+                'RecoveryTest': 'recovery_tests',
+                'DifferentialPressureTest': 'differential_pressure_tests',
+                'NVPCTest': 'nvpc_tests',
+            }
+            source_table = table_map.get(test_class_name, 'test_certificates')
+            
+            create_report_entry(
+                report_type=report_type,
+                source_id=str(test.id),
+                source_table=source_table,
+                title=title,
+                site=test.ahu_number or 'N/A',
+                created_by=test.prepared_by or 'Unknown',
+                created_at=test.created_at,
+                approved_by=request.user,
+                remarks=remarks
+            )
+        
         serializer = self.get_serializer(test)
         return Response(serializer.data)
 

@@ -18,4 +18,5 @@ urlpatterns = [
     path('api/', include('air_validation.urls')),
     path('api/', include('test_certificates.urls')),
     path('api/logbooks/', include('logbooks.urls')),
+    path('api/reports/', include('reports.urls')),
 ]
