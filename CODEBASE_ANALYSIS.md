@@ -1,5 +1,27 @@
 # Log Books System - Comprehensive Codebase Analysis
 
+---
+
+## Quick reference (full codebase scan)
+
+| Layer | Location | Purpose |
+|-------|----------|--------|
+| **Backend** | `LOG_BOOKS/backend/` | Django 4.2 REST API (PostgreSQL, JWT, DRF) |
+| **Frontend** | `LOG_BOOKS/frontend/` | React 18 + TypeScript + Vite + shadcn/ui |
+| **Config** | `backend/.env` | DB and app settings (see [Database](#28-database-configuration)) |
+| **API base** | `frontend/src/lib/api.ts` | Axios client; base URL from `VITE_API_URL` or `http://103.168.18.24:8000/api` |
+
+**Active Django apps (in `core/settings.py`):**  
+`accounts`, `logbooks`, `sites`, `instruments`, `chemical_prep`, `chiller_logs`, `boiler_logs`, `compressor_logs`, `air_validation`, `test_certificates`, `reports`.
+
+**Note:** The folder `backend/utility_logs/` exists but is **not** in `INSTALLED_APPS`. Chiller/boiler/compressor are served by `chiller_logs`, `boiler_logs`, and `compressor_logs` respectively.
+
+**Known issue:** `makemigrations` / DB access can fail with  
+`FATAL: password authentication failed for user "postgres"`.  
+Fix: ensure PostgreSQL is running, `.env` has correct `DB_USER`/`DB_PASSWORD`/`DB_HOST`/`DB_PORT`, and that the Postgres user and DB exist and match (e.g. database `Log_Books` and user `postgres` with password from `.env`).
+
+---
+
 ## Executive Summary
 
 This is a **full-stack web application** for managing industrial logbooks, HVAC validation tests, utility monitoring (chillers, boilers, compressors), chemical preparations, and test certificates. The system implements role-based access control with a multi-tenant architecture supporting multiple clients and sites.
