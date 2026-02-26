@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig } from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://103.168.18.24:8000/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api';
 
 // Create axios instance
 const api: AxiosInstance = axios.create({
@@ -135,6 +135,21 @@ export const authAPI = {
 
   getCurrentUser: async () => {
     const response = await api.get('/users/me/');
+    return response.data;
+  },
+
+  requestPasswordReset: async (email: string) => {
+    const response = await api.post('/auth/forgot-password/', { email });
+    return response.data;
+  },
+
+  validatePasswordResetToken: async (token: string) => {
+    const response = await api.post('/auth/validate-reset-token/', { token });
+    return response.data;
+  },
+
+  resetPassword: async (payload: { token: string; new_password: string; confirm_password: string }) => {
+    const response = await api.post('/auth/reset-password/', payload);
     return response.data;
   },
 };

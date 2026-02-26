@@ -136,10 +136,19 @@ export default function LoginPage() {
                 </div>
               )}
 
-              <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
-                {isLoading ? 'Signing in...' : 'Sign In'}
-                <ArrowRight className="w-4 h-4 ml-2" />
-              </Button>
+              <div className="space-y-3">
+                <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
+                  {isLoading ? 'Signing in...' : 'Sign In'}
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/forgot-password')}
+                  className="w-full text-sm text-primary hover:underline text-center"
+                >
+                  Forgot your password?
+                </button>
+              </div>
             </form>
           </div>
         </div>
