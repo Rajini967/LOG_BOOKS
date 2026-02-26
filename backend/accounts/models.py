@@ -2,6 +2,10 @@
 Custom User model for the LogBook system.
 """
 import uuid
+import secrets
+import hashlib
+from datetime import timedelta
+
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 from django.db import models
 from django.utils import timezone
@@ -139,4 +143,65 @@ class User(AbstractBaseUser, PermissionsMixin):
     def is_client(self):
         """Check if user is Client."""
         return self.role == UserRole.CLIENT
+
+
+def hash_reset_token(raw_token: str) -> str:
+    """
+    Return a SHA-256 hex digest for a raw reset token.
+
+    The raw token is only sent to the user via email and never stored.
+    """
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+class PasswordResetToken(models.Model):
+    """
+    Password reset token for a user.
+
+    Tokens are single-use and time-limited. Only a hash of the token is stored.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="password_reset_tokens")
+    token_hash = models.CharField(max_length=64, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "password_reset_tokens"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:  # pragma: no cover - trivial
+        return f"Password reset token for {self.user.email}"
+
+    @property
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at
+
+    def mark_used(self) -> None:
+        self.is_used = True
+        self.save(update_fields=["is_used"])
+
+    @classmethod
+    def create_for_user(cls, user, *, minutes_valid: int = 15):
+        """
+        Create a new token for the given user, invalidating existing unused ones.
+
+        Returns a tuple of (instance, raw_token) where raw_token is suitable
+        for inclusion in an email link.
+        """
+        cls.objects.filter(user=user, is_used=False).delete()
+
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hash_reset_token(raw_token)
+        now = timezone.now()
+        expires_at = now + timedelta(minutes=minutes_valid)
+
+        instance = cls.objects.create(
+            user=user,
+            token_hash=token_hash,
+            expires_at=expires_at,
+        )
+        return instance, raw_token
 

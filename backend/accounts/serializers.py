@@ -1,10 +1,14 @@
 """
 Serializers for User model.
 """
+from datetime import datetime
+
+from django.utils import timezone
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from django.contrib.auth.password_validation import validate_password
-from .models import User, UserRole
+
+from .models import User, UserRole, PasswordResetToken, hash_reset_token
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -199,4 +203,99 @@ class UserUpdateSerializer(serializers.ModelSerializer):
         
         instance.save()
         return instance
+
+
+class ForgotPasswordSerializer(serializers.Serializer):
+    """
+    Serializer for initiating a password reset by email.
+    """
+
+    email = serializers.EmailField()
+
+    def validate_email(self, value: str) -> str:
+        # Normalize, but do not reveal whether the email exists.
+        return value.strip().lower()
+
+    def get_user_for_email(self):
+        email = self.validated_data.get("email")
+        try:
+            # Use all_objects to respect soft-delete rules but filter them out.
+            return User.all_objects.get(email=email, is_deleted=False, is_active=True)
+        except User.DoesNotExist:
+            return None
+
+
+class _BaseTokenSerializer(serializers.Serializer):
+    token = serializers.CharField()
+
+    def _get_token_obj(self, raw_token: str) -> PasswordResetToken:
+        token_hash = hash_reset_token(raw_token)
+        now: datetime = timezone.now()
+
+        try:
+            token_obj = PasswordResetToken.objects.select_related("user").get(
+                token_hash=token_hash,
+                is_used=False,
+                expires_at__gt=now,
+            )
+        except PasswordResetToken.DoesNotExist:
+            raise serializers.ValidationError({"token": "Invalid or expired token."})
+
+        return token_obj
+
+
+class ValidateResetTokenSerializer(_BaseTokenSerializer):
+    """
+    Serializer used to validate that a reset token is still valid.
+    """
+
+    def validate(self, attrs):
+        # Will raise if invalid
+        raw_token = attrs.get("token", "")
+        self.token_obj = self._get_token_obj(raw_token)
+        return attrs
+
+
+class ResetPasswordSerializer(_BaseTokenSerializer):
+    """
+    Serializer used to perform a password reset given a token.
+    """
+
+    new_password = serializers.CharField(
+        write_only=True,
+        required=True,
+        validators=[validate_password],
+        style={"input_type": "password"},
+    )
+    confirm_password = serializers.CharField(
+        write_only=True,
+        required=True,
+        style={"input_type": "password"},
+    )
+
+    def validate(self, attrs):
+        if attrs.get("new_password") != attrs.get("confirm_password"):
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+
+        # Will raise if token invalid/expired/used.
+        raw_token = attrs.get("token", "")
+        self.token_obj = self._get_token_obj(raw_token)
+        return attrs
+
+    def save(self, **kwargs):
+        token_obj: PasswordResetToken = getattr(self, "token_obj")
+        user = token_obj.user
+
+        new_password = self.validated_data["new_password"]
+        user.set_password(new_password)
+        # Ensure account is active after a successful reset.
+        user.is_active = True
+        user.save(update_fields=["password", "is_active"])
+
+        token_obj.mark_used()
+
+        return user
+
 

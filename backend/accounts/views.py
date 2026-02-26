@@ -6,19 +6,25 @@ from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken, BlacklistedToken
 from django.contrib.auth import get_user_model
-from django.utils import timezone
+from django.core.mail import send_mail
+from django.conf import settings
 from django.db import IntegrityError
 
-from .models import User, UserRole
+from .models import User, UserRole, PasswordResetToken, hash_reset_token
 from .serializers import (
     UserSerializer,
     UserCreateSerializer,
     UserUpdateSerializer,
     CustomTokenObtainPairSerializer,
+    ForgotPasswordSerializer,
+    ValidateResetTokenSerializer,
+    ResetPasswordSerializer,
 )
 from .permissions import (
     CanCreateUsers,
@@ -104,6 +110,87 @@ class LogoutView(APIView):
             )
 
 
+class ForgotPasswordView(APIView):
+    """
+    Initiate password reset via email.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
+
+    def post(self, request):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = serializer.get_user_for_email()
+
+        if user:
+            token_obj, raw_token = PasswordResetToken.create_for_user(user)
+            reset_url = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/reset-password?token={raw_token}"
+
+            subject = "Reset your LogBook account password"
+            message = (
+                "You (or someone else) requested a password reset for your LogBook account.\n\n"
+                f"To set a new password, open the link below in your browser:\n\n{reset_url}\n\n"
+                "This link will expire in 15 minutes and can be used only once.\n\n"
+                "If you did not request this, you can safely ignore this email."
+            )
+
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+                recipient_list=[user.email],
+                fail_silently=True,
+            )
+
+        # Always respond with a generic message to avoid revealing if the email exists.
+        return Response(
+            {
+                "message": "If the email exists, a reset link has been sent."
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ValidateResetTokenView(APIView):
+    """
+    Validate that a password reset token is still valid.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ValidateResetTokenSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response({"valid": True}, status=status.HTTP_200_OK)
+
+
+class ResetPasswordView(APIView):
+    """
+    Reset password using a valid token.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        # Blacklist all outstanding refresh tokens for this user.
+        for token in OutstandingToken.objects.filter(user=user):
+            try:
+                BlacklistedToken.objects.get_or_create(token=token)
+            except Exception:
+                # If a token is already blacklisted or another error occurs, continue.
+                continue
+
+        return Response(
+            {"message": "Password has been reset successfully."},
+            status=status.HTTP_200_OK,
+        )
 class UserViewSet(viewsets.ModelViewSet):
     """
     ViewSet for User CRUD operations.
