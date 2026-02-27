@@ -40,7 +40,7 @@ import { FieldWithValidation } from '@/components/logbook/FieldWithValidation';
 
 interface ELogBook {
   id: string;
-  equipmentType: 'chiller' | 'boiler' | 'compressor' | 'chemical' | string; // string for custom logbooks
+  equipmentType: 'chiller';
   equipmentId: string;
   schemaId?: string; // For custom logbooks
   customFields?: Record<string, any>; // For custom logbook field values
@@ -197,11 +197,10 @@ const chemicals = [
   { name: 'Antiscalant', stockConcentration: 100 },
 ];
 
-interface ELogBookPageProps {
-  equipmentType?: 'chiller' | 'boiler' | 'chemical';
-}
-
-export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) {
+export default function ELogBookPage() {
+  // This page is now dedicated to the Chiller log book only.
+  // Boiler and Chemical have their own independent pages.
+  const equipmentType: 'chiller' = 'chiller';
   const { user } = useAuth();
   const [logbookSchemas, setLogbookSchemas] = useState<LogbookSchema[]>([]);
   const [selectedSchema, setSelectedSchema] = useState<LogbookSchema | null>(null);
@@ -211,7 +210,7 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
-    equipmentType: (equipmentType || '') as 'chiller' | 'boiler' | 'compressor' | 'chemical' | string,
+    equipmentType: 'chiller' as 'chiller',
     equipmentId: '',
     // Chiller fields
     chillerSupplyTemp: '',
@@ -287,7 +286,6 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
     fromDate: '',
     toDate: '',
     status: 'all',
-    equipmentType: 'all',
     equipmentId: '',
     checkedBy: '',
     fromTime: '',
@@ -329,31 +327,9 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
         console.log('Fetched data:', { chillerLogs, boilerLogs, compressorLogs, chemicalPreps });
 
         // Convert API data to ELogBook format
-        const allLogs: ELogBook[] = [];
+      const allLogs: ELogBook[] = [];
 
-        // Convert chemical preps
-        chemicalPreps.forEach((prep: any) => {
-          const timestamp = new Date(prep.timestamp);
-          allLogs.push({
-            id: prep.id,
-            equipmentType: 'chemical',
-            equipmentId: prep.equipment_name || 'N/A',
-            date: format(timestamp, 'yyyy-MM-dd'),
-            time: format(timestamp, 'HH:mm:ss'),
-            equipmentName: prep.equipment_name,
-            chemicalName: prep.chemical_name,
-            chemicalPercent: prep.chemical_percent,
-            solutionConcentration: prep.solution_concentration,
-            waterQty: prep.water_qty,
-            chemicalQty: prep.chemical_qty,
-            remarks: prep.remarks || '',
-            checkedBy: prep.checked_by || prep.operator_name,
-            timestamp: timestamp,
-            status: prep.status as 'pending' | 'approved' | 'rejected',
-          });
-        });
-
-        // Convert chiller logs
+      // Convert chiller logs
         chillerLogs.forEach((log: any) => {
           const timestamp = new Date(log.timestamp);
           allLogs.push({
@@ -397,7 +373,7 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
           });
         });
 
-        // Convert compressor logs
+        // Convert compressor logs (ignored on chiller page)
         compressorLogs.forEach((log: any) => {
           const timestamp = new Date(log.timestamp);
           allLogs.push({
@@ -417,20 +393,15 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
           });
         });
 
-        // Filter by equipmentType if provided
-        let filteredLogs = allLogs;
-        if (equipmentType) {
-          filteredLogs = allLogs.filter(log => log.equipmentType === equipmentType);
-        }
-
-        // Sort by timestamp (newest first)
-        filteredLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-        console.log('Total logs after conversion:', filteredLogs.length, filteredLogs);
-        setLogs(filteredLogs);
+        // Only show chiller logs on this page
+        const chillerOnlyLogs = allLogs.filter(log => log.equipmentType === 'chiller');
+        chillerOnlyLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        console.log('Total chiller logs after conversion:', chillerOnlyLogs.length, chillerOnlyLogs);
+        setLogs(chillerOnlyLogs);
 
         // Build map of first chiller log per equipment per day
         const firstMap: Record<string, ELogBook> = {};
-        filteredLogs.forEach(log => {
+        allLogs.forEach(log => {
           if (log.equipmentType !== 'chiller') return;
           const key = `${log.equipmentId}_${log.date}`;
           const existing = firstMap[key];
@@ -477,50 +448,14 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
   // Refresh logs from API
   const refreshLogs = async () => {
     try {
-      const chemicalPreps = await chemicalPrepAPI.list().catch(err => {
-        console.error('Error fetching chemical preps:', err);
+      const chillerLogs = await chillerLogAPI.list().catch(err => {
+        console.error('Error fetching chiller logs:', err);
         return [];
       });
-      const [chillerLogs, boilerLogs, compressorLogs] = await Promise.all([
-        chillerLogAPI.list().catch(err => {
-          console.error('Error fetching chiller logs:', err);
-          return [];
-        }),
-        boilerLogAPI.list().catch(err => {
-          console.error('Error fetching boiler logs:', err);
-          return [];
-        }),
-        compressorLogAPI.list().catch(err => {
-          console.error('Error fetching compressor logs:', err);
-          return [];
-        }),
-      ]);
       
-      console.log('Refreshed data:', { chillerLogs, boilerLogs, compressorLogs, chemicalPreps });
+      console.log('Refreshed chiller data:', { chillerLogs });
 
       const allLogs: ELogBook[] = [];
-
-      // Convert chemical preps
-      chemicalPreps.forEach((prep: any) => {
-        const timestamp = new Date(prep.timestamp);
-        allLogs.push({
-          id: prep.id,
-          equipmentType: 'chemical',
-          equipmentId: prep.equipment_name || 'N/A',
-          date: format(timestamp, 'yyyy-MM-dd'),
-          time: format(timestamp, 'HH:mm:ss'),
-          equipmentName: prep.equipment_name,
-          chemicalName: prep.chemical_name,
-          chemicalPercent: prep.chemical_percent,
-          solutionConcentration: prep.solution_concentration,
-          waterQty: prep.water_qty,
-          chemicalQty: prep.chemical_qty,
-          remarks: prep.remarks || '',
-          checkedBy: prep.checked_by || prep.operator_name,
-          timestamp: timestamp,
-          status: prep.status as 'pending' | 'approved' | 'rejected',
-        });
-      });
 
       // Convert chiller logs
       chillerLogs.forEach((log: any) => {
@@ -573,60 +508,13 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
         });
       });
 
-      // Convert boiler logs
-      boilerLogs.forEach((log: any) => {
-        const timestamp = new Date(log.timestamp);
-        allLogs.push({
-          id: log.id,
-          equipmentType: 'boiler',
-          equipmentId: log.equipment_id,
-          date: format(timestamp, 'yyyy-MM-dd'),
-          time: format(timestamp, 'HH:mm:ss'),
-          feedWaterTemp: log.feed_water_temp,
-          oilTemp: log.oil_temp,
-          steamTemp: log.steam_temp,
-          steamPressure: log.steam_pressure,
-          steamFlowLPH: log.steam_flow_lph,
-          remarks: log.remarks || '',
-          checkedBy: log.operator_name,
-          timestamp: timestamp,
-          status: log.status as 'pending' | 'approved' | 'rejected',
-        });
-      });
-
-      // Convert compressor logs
-      compressorLogs.forEach((log: any) => {
-        const timestamp = new Date(log.timestamp);
-        allLogs.push({
-          id: log.id,
-          equipmentType: 'compressor',
-          equipmentId: log.equipment_id,
-          date: format(timestamp, 'yyyy-MM-dd'),
-          time: format(timestamp, 'HH:mm:ss'),
-          compressorSupplyTemp: log.compressor_supply_temp,
-          compressorReturnTemp: log.compressor_return_temp,
-          compressorPressure: log.compressor_pressure,
-          compressorFlow: log.compressor_flow,
-          remarks: log.remarks || '',
-          checkedBy: log.operator_name,
-          timestamp: timestamp,
-          status: log.status as 'pending' | 'approved' | 'rejected',
-        });
-      });
-
-      // Filter by equipmentType if provided
-      let filteredLogs = allLogs;
-      if (equipmentType) {
-        filteredLogs = allLogs.filter(log => log.equipmentType === equipmentType);
-      }
-
-      filteredLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-      console.log('Total logs after refresh:', filteredLogs.length, filteredLogs);
-      setLogs(filteredLogs);
+      allLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      console.log('Total chiller logs after refresh:', allLogs.length, allLogs);
+      setLogs(allLogs);
 
       // Rebuild map of first chiller log per equipment per day
       const firstMap: Record<string, ELogBook> = {};
-      filteredLogs.forEach(log => {
+      allLogs.forEach(log => {
         if (log.equipmentType !== 'chiller') return;
         const key = `${log.equipmentId}_${log.date}`;
         const existing = firstMap[key];
@@ -645,11 +533,6 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
   const uniqueEquipmentIds = useMemo(() => {
     if (!logs || logs.length === 0) return [];
     return Array.from(new Set(logs.map(log => log.equipmentId).filter(Boolean))).sort();
-  }, [logs]);
-  
-  const uniqueEquipmentTypes = useMemo(() => {
-    if (!logs || logs.length === 0) return [];
-    return Array.from(new Set(logs.map(log => log.equipmentType).filter(Boolean))).sort();
   }, [logs]);
   
   const uniqueCheckedBy = useMemo(() => {
@@ -672,11 +555,6 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
     // Status filter
     if (filters.status !== 'all') {
       result = result.filter(log => log.status === filters.status);
-    }
-
-    // Equipment Type filter
-    if (filters.equipmentType !== 'all') {
-      result = result.filter(log => log.equipmentType === filters.equipmentType);
     }
 
     // Equipment ID filter
@@ -708,7 +586,6 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
       fromDate: '',
       toDate: '',
       status: 'all',
-      equipmentType: 'all',
       equipmentId: '',
       checkedBy: '',
       fromTime: '',
@@ -726,7 +603,6 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
       filters.fromDate,
       filters.toDate,
       filters.status !== 'all',
-      filters.equipmentType !== 'all',
       filters.equipmentId,
       filters.checkedBy,
       filters.fromTime,
@@ -744,7 +620,6 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
       if (filters.fromDate) result = result.filter(log => log.date >= filters.fromDate);
       if (filters.toDate) result = result.filter(log => log.date <= filters.toDate);
       if (filters.status !== 'all') result = result.filter(log => log.status === filters.status);
-      if (filters.equipmentType !== 'all') result = result.filter(log => log.equipmentType === filters.equipmentType);
       if (filters.equipmentId) result = result.filter(log => log.equipmentId.toLowerCase().includes(filters.equipmentId.toLowerCase()));
       if (filters.checkedBy) result = result.filter(log => log.checkedBy === filters.checkedBy);
       if (filters.fromTime) result = result.filter(log => log.time >= filters.fromTime);
@@ -770,24 +645,8 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
     }
     
     try {
-      // Handle chemical entries
-      if (formData.equipmentType === 'chemical') {
-        const prepData = {
-          equipment_name: formData.equipmentName,
-          chemical_name: formData.chemicalName,
-          chemical_percent: chemicals.find(c => c.name === formData.chemicalName)?.stockConcentration,
-          solution_concentration: parseFloat(formData.solutionConcentration),
-          water_qty: parseFloat(formData.waterQty),
-          chemical_qty: parseFloat(formData.chemicalQty),
-          remarks: formData.remarks || undefined,
-          checked_by: user?.name || user?.email || 'Unknown',
-        };
-        
-        await chemicalPrepAPI.create(prepData);
-        toast.success('Chemical preparation entry saved successfully');
-      }
-      // Handle chiller entries
-      else if (formData.equipmentType === 'chiller') {
+      // Chiller page handles only chiller entries
+      if (formData.equipmentType === 'chiller') {
         // Validate all chiller fields with clear messages before saving
         if (!validateChillerForm()) {
           return;
@@ -1205,7 +1064,9 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
   };
 
   const validateChillerForm = (): boolean => {
-    // Required fields (presence + basic numeric validation where applicable)
+    // Required fields (presence + basic numeric validation where applicable).
+    // IMPORTANT: Do NOT block save on limit violations; limits are shown
+    // visually (red fields + messages) and highlighted in the list view.
     const requiredFields: {
       key: string;
       label: string;
@@ -1253,24 +1114,9 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
         }
       }
 
-      // Limit validation based on equipmentLimits
-      if (field.limitField && isFormValueOutOfLimit('chiller', field.limitField, String(rawValue))) {
-        const limit = equipmentLimits.chiller[field.limitField] as any;
-        if (limit) {
-          const constraint =
-            limit.type === 'NMT' && typeof limit.max !== 'undefined'
-              ? `not more than ${limit.max} ${limit.unit}`
-              : limit.type === 'NLT' && typeof limit.min !== 'undefined'
-              ? `not less than ${limit.min} ${limit.unit}`
-              : '';
-          if (constraint) {
-            toast.error(`${field.label} must be ${constraint}.`);
-          } else {
-            toast.error(`${field.label} is out of allowed range.`);
-          }
-          return false;
-        }
-      }
+      // NOTE: limit (NMT / NLT) violations are *not* enforced here.
+      // They are only highlighted in the UI (red field + helper text),
+      // and in the list view, so the operator can still save.
     }
 
     // Optional numeric-only fields (validate only if provided)
@@ -1393,23 +1239,7 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                     </Select>
                   </div>
 
-                  {/* Equipment Type - Hide if equipmentType prop is provided */}
-                  {!equipmentType && (
-                    <div className="space-y-3">
-                      <Label className="text-base font-semibold">Equipment Type</Label>
-                      <Select value={filters.equipmentType} onValueChange={(v) => setFilters({ ...filters, equipmentType: v })}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select equipment type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Types</SelectItem>
-                          <SelectItem value="chiller">Chiller</SelectItem>
-                          <SelectItem value="boiler">Boiler</SelectItem>
-                          <SelectItem value="chemical">Chemical</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
+                  {/* Equipment Type filter not needed on chiller-only page */}
 
                   {/* Equipment ID */}
                   <div className="space-y-3">
@@ -3102,17 +2932,17 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
         {/* Logs Table */}
         <div className="bg-card rounded-lg border border-border overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="bg-muted/50 border-b border-border">
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Date</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Time</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Equipment</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Readings</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Remarks</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Checked By</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Actions</th>
+            <table className="min-w-full text-sm">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Time</th>
+                  <th className="px-3 py-2 text-left">Equipment</th>
+                  <th className="px-3 py-2 text-left">Readings</th>
+                  <th className="px-3 py-2 text-left">Remarks</th>
+                  <th className="px-3 py-2 text-left">Checked By</th>
+                  <th className="px-3 py-2 text-left">Status</th>
+                  <th className="px-3 py-2 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
