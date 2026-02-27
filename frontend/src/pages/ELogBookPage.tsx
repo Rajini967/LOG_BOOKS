@@ -54,6 +54,34 @@ interface ELogBook {
   ctDifferentialTemp?: number;
   chillerWaterInletPressure?: number;
   chillerMakeupWaterFlow?: number;
+  evapWaterInletPressure?: number;
+  evapWaterOutletPressure?: number;
+  evapEnteringWaterTemp?: number;
+  evapLeavingWaterTemp?: number;
+  evapApproachTemp?: number;
+  condWaterInletPressure?: number;
+  condWaterOutletPressure?: number;
+  condEnteringWaterTemp?: number;
+  condLeavingWaterTemp?: number;
+  condApproachTemp?: number;
+  chillerControlSignal?: number;
+  avgMotorCurrent?: number;
+  compressorRunningTimeMin?: number;
+  starterEnergyKwh?: number;
+  coolingTowerPumpStatus?: string;
+  chilledWaterPumpStatus?: string;
+  coolingTowerFanStatus?: string;
+  coolingTowerBlowoffValveStatus?: string;
+  coolingTowerBlowdownTimeMin?: number;
+  coolingTowerChemicalName?: string;
+  coolingTowerChemicalQtyPerDay?: number;
+  chilledWaterPumpChemicalName?: string;
+  chilledWaterPumpChemicalQtyKg?: number;
+  coolingTowerFanChemicalName?: string;
+  coolingTowerFanChemicalQtyKg?: number;
+  recordingFrequency?: string;
+  operatorSign?: string;
+  verifiedBy?: string;
   // Boiler fields
   feedWaterTemp?: number;
   oilTemp?: number;
@@ -78,6 +106,38 @@ interface ELogBook {
   status: 'pending' | 'approved' | 'rejected' | 'draft';
 }
 
+type PumpStatus = 'ON' | 'OFF';
+
+const encodePumpPair = (p1: PumpStatus, p2: PumpStatus) => `P1:${p1};P2:${p2}`;
+
+const decodePumpPair = (
+  value?: string | null,
+): { p1: PumpStatus; p2: PumpStatus } | null => {
+  if (!value) return null;
+  const match = value.match(/P1:(ON|OFF);P2:(ON|OFF)/i);
+  if (!match) return null;
+  return {
+    p1: match[1].toUpperCase() as PumpStatus,
+    p2: match[2].toUpperCase() as PumpStatus,
+  };
+};
+
+const encodeFanTriple = (f1: PumpStatus, f2: PumpStatus, f3: PumpStatus) =>
+  `F1:${f1};F2:${f2};F3:${f3}`;
+
+const decodeFanTriple = (
+  value?: string | null,
+): { f1: PumpStatus; f2: PumpStatus; f3: PumpStatus } | null => {
+  if (!value) return null;
+  const match = value.match(/F1:(ON|OFF);F2:(ON|OFF);F3:(ON|OFF)/i);
+  if (!match) return null;
+  return {
+    f1: match[1].toUpperCase() as PumpStatus,
+    f2: match[2].toUpperCase() as PumpStatus,
+    f3: match[3].toUpperCase() as PumpStatus,
+  };
+};
+
 // Equipment limits based on the example documents
 const equipmentLimits = {
   chiller: {
@@ -87,6 +147,23 @@ const equipmentLimits = {
     coolingTowerReturnTemp: { max: 30, unit: '°C', type: 'NMT' },
     ctDifferentialTemp: { max: 5, unit: '°C', type: 'NMT' },
     chillerWaterInletPressure: { min: 2, unit: 'bar', type: 'NLT' },
+    // Detailed evaporator limits (approximate, based on physical sheet)
+    evapWaterInletPressure: { min: 2.3, unit: 'kg/cm²', type: 'NLT' },
+    evapWaterOutletPressure: { min: 2.0, unit: 'kg/cm²', type: 'NLT' },
+    evapEnteringWaterTemp: { max: 18, unit: '°C', type: 'NMT' },
+    evapLeavingWaterTemp: { max: 13, unit: '°C', type: 'NMT' },
+    evapApproachTemp: { max: 4, unit: '°C', type: 'NMT' },
+    // Condenser limits (approximate)
+    condWaterInletPressure: { min: 1.5, unit: 'kg/cm²', type: 'NLT' },
+    condWaterOutletPressure: { min: 1.0, unit: 'kg/cm²', type: 'NLT' },
+    condEnteringWaterTemp: { max: 35, unit: '°C', type: 'NMT' },
+    condLeavingWaterTemp: { max: 40, unit: '°C', type: 'NMT' },
+    condApproachTemp: { max: 6, unit: '°C', type: 'NMT' },
+    // Compressor / electrical
+    chillerControlSignal: { max: 100, unit: '%', type: 'NMT' },
+    avgMotorCurrent: { max: 100, unit: 'A', type: 'NMT' },
+    compressorRunningTimeMin: { max: 60 * 24, unit: 'min', type: 'NMT' },
+    starterEnergyKwh: { max: 1000, unit: 'kWh', type: 'NMT' },
   },
   boiler: {
     feedWaterTemp: { min: 50, unit: '°C', type: 'NLT' },
@@ -130,6 +207,7 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
   const [selectedSchema, setSelectedSchema] = useState<LogbookSchema | null>(null);
   const [customFormData, setCustomFormData] = useState<Record<string, any>>({});
   const [logs, setLogs] = useState<ELogBook[]>([]);
+  const [firstChillerLogByDay, setFirstChillerLogByDay] = useState<Record<string, ELogBook>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -143,6 +221,43 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
     ctDifferentialTemp: '',
     chillerWaterInletPressure: '',
     chillerMakeupWaterFlow: '',
+    evapWaterInletPressure: '',
+    evapWaterOutletPressure: '',
+    evapEnteringWaterTemp: '',
+    evapLeavingWaterTemp: '',
+    evapApproachTemp: '',
+    condWaterInletPressure: '',
+    condWaterOutletPressure: '',
+    condEnteringWaterTemp: '',
+    condLeavingWaterTemp: '',
+    condApproachTemp: '',
+    chillerControlSignal: '',
+    avgMotorCurrent: '',
+    compressorRunningTimeMin: '',
+    starterEnergyKwh: '',
+    // Structured pump/fan status (per equipment)
+    coolingTowerPump1: 'OFF' as PumpStatus,
+    coolingTowerPump2: 'OFF' as PumpStatus,
+    chilledWaterPump1: 'OFF' as PumpStatus,
+    chilledWaterPump2: 'OFF' as PumpStatus,
+    coolingTowerFan1: 'OFF' as PumpStatus,
+    coolingTowerFan2: 'OFF' as PumpStatus,
+    coolingTowerFan3: 'OFF' as PumpStatus,
+    // Legacy aggregated strings sent to backend (for list views)
+    coolingTowerPumpStatus: '',
+    chilledWaterPumpStatus: '',
+    coolingTowerFanStatus: '',
+    coolingTowerBlowoffValveStatus: '',
+    coolingTowerBlowdownTimeMin: '',
+    coolingTowerChemicalName: '',
+    coolingTowerChemicalQtyPerDay: '',
+    chilledWaterPumpChemicalName: '',
+    chilledWaterPumpChemicalQtyKg: '',
+    coolingTowerFanChemicalName: '',
+    coolingTowerFanChemicalQtyKg: '',
+    recordingFrequency: '',
+    operatorSign: '',
+    verifiedBy: '',
     // Boiler fields
     feedWaterTemp: '',
     oilTemp: '',
@@ -312,6 +427,18 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
         filteredLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
         console.log('Total logs after conversion:', filteredLogs.length, filteredLogs);
         setLogs(filteredLogs);
+
+        // Build map of first chiller log per equipment per day
+        const firstMap: Record<string, ELogBook> = {};
+        filteredLogs.forEach(log => {
+          if (log.equipmentType !== 'chiller') return;
+          const key = `${log.equipmentId}_${log.date}`;
+          const existing = firstMap[key];
+          if (!existing || log.timestamp.getTime() < existing.timestamp.getTime()) {
+            firstMap[key] = log;
+          }
+        });
+        setFirstChillerLogByDay(firstMap);
       } catch (error) {
         console.error('Error fetching data:', error);
         toast.error('Failed to load log entries');
@@ -411,6 +538,34 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
           ctDifferentialTemp: log.ct_differential_temp,
           chillerWaterInletPressure: log.chiller_water_inlet_pressure,
           chillerMakeupWaterFlow: log.chiller_makeup_water_flow,
+          evapWaterInletPressure: log.evap_water_inlet_pressure,
+              evapWaterOutletPressure: log.evap_water_outlet_pressure,
+              evapEnteringWaterTemp: log.evap_entering_water_temp,
+              evapLeavingWaterTemp: log.evap_leaving_water_temp,
+              evapApproachTemp: log.evap_approach_temp,
+              condWaterInletPressure: log.cond_water_inlet_pressure,
+              condWaterOutletPressure: log.cond_water_outlet_pressure,
+              condEnteringWaterTemp: log.cond_entering_water_temp,
+              condLeavingWaterTemp: log.cond_leaving_water_temp,
+              condApproachTemp: log.cond_approach_temp,
+              chillerControlSignal: log.chiller_control_signal,
+              avgMotorCurrent: log.avg_motor_current,
+              compressorRunningTimeMin: log.compressor_running_time_min,
+              starterEnergyKwh: log.starter_energy_kwh,
+          coolingTowerPumpStatus: log.cooling_tower_pump_status,
+          chilledWaterPumpStatus: log.chilled_water_pump_status,
+          coolingTowerFanStatus: log.cooling_tower_fan_status,
+          coolingTowerBlowoffValveStatus: log.cooling_tower_blowoff_valve_status,
+          coolingTowerBlowdownTimeMin: log.cooling_tower_blowdown_time_min,
+          coolingTowerChemicalName: log.cooling_tower_chemical_name,
+          coolingTowerChemicalQtyPerDay: log.cooling_tower_chemical_qty_per_day,
+          chilledWaterPumpChemicalName: log.chilled_water_pump_chemical_name,
+          chilledWaterPumpChemicalQtyKg: log.chilled_water_pump_chemical_qty_kg,
+          coolingTowerFanChemicalName: log.cooling_tower_fan_chemical_name,
+          coolingTowerFanChemicalQtyKg: log.cooling_tower_fan_chemical_qty_kg,
+          recordingFrequency: log.recording_frequency,
+          operatorSign: log.operator_sign,
+          verifiedBy: log.verified_by,
           remarks: log.remarks || '',
           checkedBy: log.operator_name,
           timestamp: timestamp,
@@ -468,6 +623,18 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
       filteredLogs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
       console.log('Total logs after refresh:', filteredLogs.length, filteredLogs);
       setLogs(filteredLogs);
+
+      // Rebuild map of first chiller log per equipment per day
+      const firstMap: Record<string, ELogBook> = {};
+      filteredLogs.forEach(log => {
+        if (log.equipmentType !== 'chiller') return;
+        const key = `${log.equipmentId}_${log.date}`;
+        const existing = firstMap[key];
+        if (!existing || log.timestamp.getTime() < existing.timestamp.getTime()) {
+          firstMap[key] = log;
+        }
+      });
+      setFirstChillerLogByDay(firstMap);
     } catch (error) {
       console.error('Error refreshing logs:', error);
       toast.error('Failed to refresh log entries');
@@ -621,6 +788,99 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
       }
       // Handle chiller entries
       else if (formData.equipmentType === 'chiller') {
+        // Validate all chiller fields with clear messages before saving
+        if (!validateChillerForm()) {
+          return;
+        }
+        const now = new Date();
+        const today = format(now, 'yyyy-MM-dd');
+
+        // Determine if this is the first chiller log of the day for this equipment
+        const key = `${formData.equipmentId}_${today}`;
+        const firstLogForDay = firstChillerLogByDay[key];
+
+        // If not the first log, enforce remarks when pump/fan status changes
+        if (firstLogForDay) {
+          const initialPumps = decodePumpPair(firstLogForDay.coolingTowerPumpStatus);
+          const initialChilled = decodePumpPair(firstLogForDay.chilledWaterPumpStatus);
+          const initialFans = decodeFanTriple(firstLogForDay.coolingTowerFanStatus);
+
+          const changes: string[] = [];
+
+          if (initialPumps) {
+            if (initialPumps.p1 !== formData.coolingTowerPump1) {
+              changes.push(
+                `Cooling Tower Pump 1 changed from ${initialPumps.p1} to ${formData.coolingTowerPump1}`,
+              );
+            }
+            if (initialPumps.p2 !== formData.coolingTowerPump2) {
+              changes.push(
+                `Cooling Tower Pump 2 changed from ${initialPumps.p2} to ${formData.coolingTowerPump2}`,
+              );
+            }
+          }
+
+          if (initialChilled) {
+            if (initialChilled.p1 !== formData.chilledWaterPump1) {
+              changes.push(
+                `Chilled Water Pump 1 changed from ${initialChilled.p1} to ${formData.chilledWaterPump1}`,
+              );
+            }
+            if (initialChilled.p2 !== formData.chilledWaterPump2) {
+              changes.push(
+                `Chilled Water Pump 2 changed from ${initialChilled.p2} to ${formData.chilledWaterPump2}`,
+              );
+            }
+          }
+
+          if (initialFans) {
+            if (initialFans.f1 !== formData.coolingTowerFan1) {
+              changes.push(
+                `Cooling Tower Fan 1 changed from ${initialFans.f1} to ${formData.coolingTowerFan1}`,
+              );
+            }
+            if (initialFans.f2 !== formData.coolingTowerFan2) {
+              changes.push(
+                `Cooling Tower Fan 2 changed from ${initialFans.f2} to ${formData.coolingTowerFan2}`,
+              );
+            }
+            if (initialFans.f3 !== formData.coolingTowerFan3) {
+              changes.push(
+                `Cooling Tower Fan 3 changed from ${initialFans.f3} to ${formData.coolingTowerFan3}`,
+              );
+            }
+          }
+
+          if (changes.length > 0 && !formData.remarks.trim()) {
+            toast.error('Remarks are required when changing pump/fan status.');
+            return;
+          }
+
+          if (changes.length > 0) {
+            const timeStr = format(now, 'HH:mm');
+            const autoNotes = changes.map((c) => `${c} at ${timeStr}`).join('\n');
+            const updatedRemarks = formData.remarks
+              ? `${formData.remarks}\n${autoNotes}`
+              : autoNotes;
+            // Update local formData so the combined remarks are sent to the backend
+            formData.remarks = updatedRemarks;
+          }
+        }
+
+        const coolingTowerPumpStatus = encodePumpPair(
+          formData.coolingTowerPump1,
+          formData.coolingTowerPump2,
+        );
+        const chilledWaterPumpStatus = encodePumpPair(
+          formData.chilledWaterPump1,
+          formData.chilledWaterPump2,
+        );
+        const coolingTowerFanStatus = encodeFanTriple(
+          formData.coolingTowerFan1,
+          formData.coolingTowerFan2,
+          formData.coolingTowerFan3,
+        );
+
         const logData = {
           equipment_id: formData.equipmentId,
           chiller_supply_temp: parseFloat(formData.chillerSupplyTemp),
@@ -630,6 +890,70 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
           ct_differential_temp: parseFloat(formData.ctDifferentialTemp),
           chiller_water_inlet_pressure: parseFloat(formData.chillerWaterInletPressure),
           chiller_makeup_water_flow: formData.chillerMakeupWaterFlow ? parseFloat(formData.chillerMakeupWaterFlow) : undefined,
+          evap_water_inlet_pressure: formData.evapWaterInletPressure
+            ? parseFloat(formData.evapWaterInletPressure)
+            : undefined,
+          evap_water_outlet_pressure: formData.evapWaterOutletPressure
+            ? parseFloat(formData.evapWaterOutletPressure)
+            : undefined,
+          evap_entering_water_temp: formData.evapEnteringWaterTemp
+            ? parseFloat(formData.evapEnteringWaterTemp)
+            : undefined,
+          evap_leaving_water_temp: formData.evapLeavingWaterTemp
+            ? parseFloat(formData.evapLeavingWaterTemp)
+            : undefined,
+          evap_approach_temp: formData.evapApproachTemp
+            ? parseFloat(formData.evapApproachTemp)
+            : undefined,
+          cond_water_inlet_pressure: formData.condWaterInletPressure
+            ? parseFloat(formData.condWaterInletPressure)
+            : undefined,
+          cond_water_outlet_pressure: formData.condWaterOutletPressure
+            ? parseFloat(formData.condWaterOutletPressure)
+            : undefined,
+          cond_entering_water_temp: formData.condEnteringWaterTemp
+            ? parseFloat(formData.condEnteringWaterTemp)
+            : undefined,
+          cond_leaving_water_temp: formData.condLeavingWaterTemp
+            ? parseFloat(formData.condLeavingWaterTemp)
+            : undefined,
+          cond_approach_temp: formData.condApproachTemp
+            ? parseFloat(formData.condApproachTemp)
+            : undefined,
+          chiller_control_signal: formData.chillerControlSignal
+            ? parseFloat(formData.chillerControlSignal)
+            : undefined,
+          avg_motor_current: formData.avgMotorCurrent
+            ? parseFloat(formData.avgMotorCurrent)
+            : undefined,
+          compressor_running_time_min: formData.compressorRunningTimeMin
+            ? parseFloat(formData.compressorRunningTimeMin)
+            : undefined,
+          starter_energy_kwh: formData.starterEnergyKwh
+            ? parseFloat(formData.starterEnergyKwh)
+            : undefined,
+          cooling_tower_pump_status: coolingTowerPumpStatus || undefined,
+          chilled_water_pump_status: chilledWaterPumpStatus || undefined,
+          cooling_tower_fan_status: coolingTowerFanStatus || undefined,
+          cooling_tower_blowoff_valve_status: formData.coolingTowerBlowoffValveStatus || undefined,
+          cooling_tower_blowdown_time_min: formData.coolingTowerBlowdownTimeMin
+            ? parseFloat(formData.coolingTowerBlowdownTimeMin)
+            : undefined,
+          cooling_tower_chemical_name: formData.coolingTowerChemicalName || undefined,
+          cooling_tower_chemical_qty_per_day: formData.coolingTowerChemicalQtyPerDay
+            ? parseFloat(formData.coolingTowerChemicalQtyPerDay)
+            : undefined,
+          chilled_water_pump_chemical_name: formData.chilledWaterPumpChemicalName || undefined,
+          chilled_water_pump_chemical_qty_kg: formData.chilledWaterPumpChemicalQtyKg
+            ? parseFloat(formData.chilledWaterPumpChemicalQtyKg)
+            : undefined,
+          cooling_tower_fan_chemical_name: formData.coolingTowerFanChemicalName || undefined,
+          cooling_tower_fan_chemical_qty_kg: formData.coolingTowerFanChemicalQtyKg
+            ? parseFloat(formData.coolingTowerFanChemicalQtyKg)
+            : undefined,
+          recording_frequency: formData.recordingFrequency || undefined,
+          operator_sign: formData.operatorSign || undefined,
+          verified_by: formData.verifiedBy || undefined,
           remarks: formData.remarks || undefined,
         };
         
@@ -677,6 +1001,41 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
         ctDifferentialTemp: '',
         chillerWaterInletPressure: '',
         chillerMakeupWaterFlow: '',
+        evapWaterInletPressure: '',
+        evapWaterOutletPressure: '',
+        evapEnteringWaterTemp: '',
+        evapLeavingWaterTemp: '',
+        evapApproachTemp: '',
+        condWaterInletPressure: '',
+        condWaterOutletPressure: '',
+        condEnteringWaterTemp: '',
+        condLeavingWaterTemp: '',
+        condApproachTemp: '',
+        chillerControlSignal: '',
+        avgMotorCurrent: '',
+        compressorRunningTimeMin: '',
+        starterEnergyKwh: '',
+        coolingTowerPump1: 'OFF',
+        coolingTowerPump2: 'OFF',
+        chilledWaterPump1: 'OFF',
+        chilledWaterPump2: 'OFF',
+        coolingTowerFan1: 'OFF',
+        coolingTowerFan2: 'OFF',
+        coolingTowerFan3: 'OFF',
+        coolingTowerPumpStatus: '',
+        chilledWaterPumpStatus: '',
+        coolingTowerFanStatus: '',
+        coolingTowerBlowoffValveStatus: '',
+        coolingTowerBlowdownTimeMin: '',
+        coolingTowerChemicalName: '',
+        coolingTowerChemicalQtyPerDay: '',
+        chilledWaterPumpChemicalName: '',
+        chilledWaterPumpChemicalQtyKg: '',
+        coolingTowerFanChemicalName: '',
+        coolingTowerFanChemicalQtyKg: '',
+        recordingFrequency: '',
+        operatorSign: '',
+        verifiedBy: '',
         feedWaterTemp: '',
         oilTemp: '',
         steamTemp: '',
@@ -792,10 +1151,13 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
 
   const isValueOutOfLimit = (log: ELogBook, field: string, value?: number): boolean => {
     if (value === undefined) return false;
-    const limits = equipmentLimits[log.equipmentType];
-    const limit = limits[field as keyof typeof limits] as { max?: number; min?: number; unit: string; type: 'NMT' | 'NLT' } | undefined;
+    const limits = equipmentLimits[log.equipmentType as keyof typeof equipmentLimits];
+    if (!limits) return false;
+    const limit = limits[field as keyof typeof limits] as
+      | { max?: number; min?: number; unit: string; type: 'NMT' | 'NLT' }
+      | undefined;
     if (!limit) return false;
-    
+
     if (limit.type === 'NMT' && limit.max !== undefined) {
       return value > limit.max;
     }
@@ -803,6 +1165,138 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
       return value < limit.min;
     }
     return false;
+  };
+
+  const isFormValueOutOfLimit = (
+    equipment: keyof typeof equipmentLimits,
+    field: keyof (typeof equipmentLimits)['chiller'],
+    rawValue: string
+  ): boolean => {
+    if (!rawValue) return false;
+    const limits = equipmentLimits[equipment];
+    const limit = limits[field];
+    if (!limit) return false;
+    const value = parseFloat(rawValue);
+    if (Number.isNaN(value)) return false;
+
+    if (limit.type === 'NMT' && limit.max !== undefined) {
+      return value > limit.max;
+    }
+    if (limit.type === 'NLT' && limit.min !== undefined) {
+      return value < limit.min;
+    }
+    return false;
+  };
+
+  const getLimitErrorMessage = (
+    equipment: keyof typeof equipmentLimits,
+    field: keyof (typeof equipmentLimits)['chiller'],
+  ): string | null => {
+    const limits = equipmentLimits[equipment];
+    const limit = limits[field] as any;
+    if (!limit) return null;
+    if (limit.type === 'NMT' && typeof limit.max !== 'undefined') {
+      return `Value must be not more than ${limit.max} ${limit.unit}.`;
+    }
+    if (limit.type === 'NLT' && typeof limit.min !== 'undefined') {
+      return `Value must be not less than ${limit.min} ${limit.unit}.`;
+    }
+    return null;
+  };
+
+  const validateChillerForm = (): boolean => {
+    // Required fields (presence + basic numeric validation where applicable)
+    const requiredFields: {
+      key: string;
+      label: string;
+      limitField?: keyof (typeof equipmentLimits)['chiller'];
+      numeric?: boolean;
+    }[] = [
+      { key: 'equipmentId', label: 'Equipment ID' },
+      { key: 'chillerSupplyTemp', label: 'Chiller supply temp', limitField: 'chillerSupplyTemp', numeric: true },
+      { key: 'chillerReturnTemp', label: 'Chiller return temp', limitField: 'chillerReturnTemp', numeric: true },
+      { key: 'coolingTowerSupplyTemp', label: 'Cooling tower supply temp', limitField: 'coolingTowerSupplyTemp', numeric: true },
+      { key: 'coolingTowerReturnTemp', label: 'Cooling tower return temp', limitField: 'coolingTowerReturnTemp', numeric: true },
+      { key: 'ctDifferentialTemp', label: 'CT differential temp', limitField: 'ctDifferentialTemp', numeric: true },
+      { key: 'chillerWaterInletPressure', label: 'Chiller water inlet pressure', limitField: 'chillerWaterInletPressure', numeric: true },
+      { key: 'evapWaterInletPressure', label: 'Evap water inlet pressure', limitField: 'evapWaterInletPressure', numeric: true },
+      { key: 'evapWaterOutletPressure', label: 'Evap water outlet pressure', limitField: 'evapWaterOutletPressure', numeric: true },
+      { key: 'evapEnteringWaterTemp', label: 'Evap entering water temp', limitField: 'evapEnteringWaterTemp', numeric: true },
+      { key: 'evapLeavingWaterTemp', label: 'Evap leaving water temp', limitField: 'evapLeavingWaterTemp', numeric: true },
+      { key: 'evapApproachTemp', label: 'Evap approach temp', limitField: 'evapApproachTemp', numeric: true },
+      { key: 'condWaterInletPressure', label: 'Cond water inlet pressure', limitField: 'condWaterInletPressure', numeric: true },
+      { key: 'condWaterOutletPressure', label: 'Cond water outlet pressure', limitField: 'condWaterOutletPressure', numeric: true },
+      { key: 'condEnteringWaterTemp', label: 'Cond entering water temp', limitField: 'condEnteringWaterTemp', numeric: true },
+      { key: 'condLeavingWaterTemp', label: 'Cond leaving water temp', limitField: 'condLeavingWaterTemp', numeric: true },
+      { key: 'condApproachTemp', label: 'Cond approach temp', limitField: 'condApproachTemp', numeric: true },
+      { key: 'chillerControlSignal', label: 'Chiller control signal', limitField: 'chillerControlSignal', numeric: true },
+      { key: 'avgMotorCurrent', label: 'Average motor current', limitField: 'avgMotorCurrent', numeric: true },
+      { key: 'compressorRunningTimeMin', label: 'Compressor running time', limitField: 'compressorRunningTimeMin', numeric: true },
+      { key: 'starterEnergyKwh', label: 'Starter energy consumption', limitField: 'starterEnergyKwh', numeric: true },
+      { key: 'operatorSign', label: 'Operator Sign & Date' },
+    ];
+
+    for (const field of requiredFields) {
+      const rawValue = (formData as any)[field.key];
+      // Presence check
+      if (!rawValue && rawValue !== 0) {
+        toast.error(`Please enter ${field.label}.`);
+        return false;
+      }
+
+      // Numeric validation
+      if (field.numeric) {
+        const value = parseFloat(rawValue);
+        if (Number.isNaN(value)) {
+          toast.error(`${field.label} must be a numeric value.`);
+          return false;
+        }
+      }
+
+      // Limit validation based on equipmentLimits
+      if (field.limitField && isFormValueOutOfLimit('chiller', field.limitField, String(rawValue))) {
+        const limit = equipmentLimits.chiller[field.limitField] as any;
+        if (limit) {
+          const constraint =
+            limit.type === 'NMT' && typeof limit.max !== 'undefined'
+              ? `not more than ${limit.max} ${limit.unit}`
+              : limit.type === 'NLT' && typeof limit.min !== 'undefined'
+              ? `not less than ${limit.min} ${limit.unit}`
+              : '';
+          if (constraint) {
+            toast.error(`${field.label} must be ${constraint}.`);
+          } else {
+            toast.error(`${field.label} is out of allowed range.`);
+          }
+          return false;
+        }
+      }
+    }
+
+    // Optional numeric-only fields (validate only if provided)
+    const optionalNumeric: { key: string; label: string }[] = [
+      { key: 'chillerMakeupWaterFlow', label: 'Chiller make up water flow' },
+      { key: 'coolingTowerBlowdownTimeMin', label: 'Cooling tower blow down time (minutes)' },
+      { key: 'coolingTowerChemicalQtyPerDay', label: 'Cooling tower pump chemical quantity (Kg)' },
+      { key: 'chilledWaterPumpChemicalQtyKg', label: 'Chilled water pump chemical quantity (Kg)' },
+      { key: 'coolingTowerFanChemicalQtyKg', label: 'Cooling tower fan chemical quantity (Kg)' },
+    ];
+
+    for (const field of optionalNumeric) {
+      const rawValue = (formData as any)[field.key];
+      if (!rawValue && rawValue !== 0) continue;
+      const value = parseFloat(rawValue);
+      if (Number.isNaN(value)) {
+        toast.error(`${field.label} must be a numeric value.`);
+        return false;
+      }
+      if (value < 0) {
+        toast.error(`${field.label} cannot be negative.`);
+        return false;
+      }
+    }
+
+    return true;
   };
 
   const getTitle = () => {
@@ -1029,6 +1523,29 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                           ctDifferentialTemp: '',
                           chillerWaterInletPressure: '',
                           chillerMakeupWaterFlow: '',
+                          evapWaterInletPressure: '',
+                          evapWaterOutletPressure: '',
+                          evapEnteringWaterTemp: '',
+                          evapLeavingWaterTemp: '',
+                          evapApproachTemp: '',
+                          condWaterInletPressure: '',
+                          condWaterOutletPressure: '',
+                          condEnteringWaterTemp: '',
+                          condLeavingWaterTemp: '',
+                          condApproachTemp: '',
+                          chillerControlSignal: '',
+                          avgMotorCurrent: '',
+                          compressorRunningTimeMin: '',
+                          starterEnergyKwh: '',
+                          coolingTowerPumpStatus: '',
+                          chilledWaterPumpStatus: '',
+                          coolingTowerFanStatus: '',
+                          coolingTowerBlowoffValveStatus: '',
+                          coolingTowerChemicalName: '',
+                          coolingTowerChemicalQtyPerDay: '',
+                          recordingFrequency: '',
+                          operatorSign: '',
+                          verifiedBy: '',
                           feedWaterTemp: '',
                           oilTemp: '',
                           steamTemp: '',
@@ -1064,7 +1581,40 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                       <Label>Equipment ID *</Label>
                       <Select
                         value={formData.equipmentId}
-                        onValueChange={(v) => setFormData({ ...formData, equipmentId: v })}
+                        onValueChange={(v) => {
+                          setFormData((prev) => ({
+                            ...prev,
+                            equipmentId: v,
+                          }));
+                          if (formData.equipmentType === 'chiller') {
+                            const today = format(new Date(), 'yyyy-MM-dd');
+                            const key = `${v}_${today}`;
+                            const firstLog = firstChillerLogByDay[key];
+                            if (firstLog) {
+                              const initialPumps = decodePumpPair(
+                                firstLog.coolingTowerPumpStatus,
+                              );
+                              const initialChilled = decodePumpPair(
+                                firstLog.chilledWaterPumpStatus,
+                              );
+                              const initialFans = decodeFanTriple(
+                                firstLog.coolingTowerFanStatus,
+                              );
+                              setFormData((prev) => ({
+                                ...prev,
+                                coolingTowerPump1: initialPumps ? initialPumps.p1 : 'OFF',
+                                coolingTowerPump2: initialPumps ? initialPumps.p2 : 'OFF',
+                                chilledWaterPump1: initialChilled ? initialChilled.p1 : 'OFF',
+                                chilledWaterPump2: initialChilled ? initialChilled.p2 : 'OFF',
+                                coolingTowerFan1: initialFans ? initialFans.f1 : 'OFF',
+                                coolingTowerFan2: initialFans ? initialFans.f2 : 'OFF',
+                                coolingTowerFan3: initialFans ? initialFans.f3 : 'OFF',
+                                coolingTowerBlowoffValveStatus:
+                                  firstLog.coolingTowerBlowoffValveStatus || '',
+                              }));
+                            }
+                          }
+                        }}
                         disabled={!formData.equipmentType}
                       >
                         <SelectTrigger>
@@ -1083,6 +1633,7 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                 {/* Chiller Fields */}
                 {formData.equipmentType === 'chiller' && (
                   <>
+                    {/* Summary temperatures and pressures */}
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label className="flex items-center gap-2">
@@ -1095,7 +1646,19 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                           value={formData.chillerSupplyTemp}
                           onChange={(e) => setFormData({ ...formData, chillerSupplyTemp: e.target.value })}
                           placeholder="e.g., 8"
+                          className={isFormValueOutOfLimit('chiller', 'chillerSupplyTemp', formData.chillerSupplyTemp)
+                            ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                            : undefined}
                         />
+                        {isFormValueOutOfLimit(
+                          'chiller',
+                          'chillerSupplyTemp',
+                          formData.chillerSupplyTemp,
+                        ) && (
+                          <p className="text-xs text-destructive mt-1">
+                            {getLimitErrorMessage('chiller', 'chillerSupplyTemp')}
+                          </p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label className="flex items-center gap-2">
@@ -1108,7 +1671,530 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                           value={formData.chillerReturnTemp}
                           onChange={(e) => setFormData({ ...formData, chillerReturnTemp: e.target.value })}
                           placeholder="e.g., 15"
+                          className={isFormValueOutOfLimit('chiller', 'chillerReturnTemp', formData.chillerReturnTemp)
+                            ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                            : undefined}
                         />
+                        {isFormValueOutOfLimit(
+                          'chiller',
+                          'chillerReturnTemp',
+                          formData.chillerReturnTemp,
+                        ) && (
+                          <p className="text-xs text-destructive mt-1">
+                            {getLimitErrorMessage('chiller', 'chillerReturnTemp')}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Evaporator section */}
+                    <div className="mt-4 border-t pt-4 space-y-4">
+                      <Label className="text-sm font-semibold">Evaporator</Label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Gauge className="w-4 h-4" /> Evap water inlet pressure
+                            <span className="text-xs text-muted-foreground">
+                              (NLT {equipmentLimits.chiller.evapWaterInletPressure.min}{' '}
+                              {equipmentLimits.chiller.evapWaterInletPressure.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.evapWaterInletPressure}
+                            onChange={(e) =>
+                              setFormData({ ...formData, evapWaterInletPressure: e.target.value })
+                            }
+                            placeholder="e.g., 2.3"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'evapWaterInletPressure',
+                              formData.evapWaterInletPressure
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'evapWaterInletPressure',
+                            formData.evapWaterInletPressure,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'evapWaterInletPressure')}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Gauge className="w-4 h-4" /> Evap water outlet pressure
+                            <span className="text-xs text-muted-foreground">
+                              (NLT {equipmentLimits.chiller.evapWaterOutletPressure.min}{' '}
+                              {equipmentLimits.chiller.evapWaterOutletPressure.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.evapWaterOutletPressure}
+                            onChange={(e) =>
+                              setFormData({ ...formData, evapWaterOutletPressure: e.target.value })
+                            }
+                            placeholder="e.g., 2.0"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'evapWaterOutletPressure',
+                              formData.evapWaterOutletPressure
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'evapWaterOutletPressure',
+                            formData.evapWaterOutletPressure,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'evapWaterOutletPressure')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Thermometer className="w-4 h-4" /> Evap entering water temp
+                            <span className="text-xs text-muted-foreground">
+                              (NMT {equipmentLimits.chiller.evapEnteringWaterTemp.max}{' '}
+                              {equipmentLimits.chiller.evapEnteringWaterTemp.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.evapEnteringWaterTemp}
+                            onChange={(e) =>
+                              setFormData({ ...formData, evapEnteringWaterTemp: e.target.value })
+                            }
+                            placeholder="e.g., 18"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'evapEnteringWaterTemp',
+                              formData.evapEnteringWaterTemp
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'evapEnteringWaterTemp',
+                            formData.evapEnteringWaterTemp,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'evapEnteringWaterTemp')}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Thermometer className="w-4 h-4" /> Evap leaving water temp
+                            <span className="text-xs text-muted-foreground">
+                              (NMT {equipmentLimits.chiller.evapLeavingWaterTemp.max}{' '}
+                              {equipmentLimits.chiller.evapLeavingWaterTemp.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.evapLeavingWaterTemp}
+                            onChange={(e) =>
+                              setFormData({ ...formData, evapLeavingWaterTemp: e.target.value })
+                            }
+                            placeholder="e.g., 13"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'evapLeavingWaterTemp',
+                              formData.evapLeavingWaterTemp
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'evapLeavingWaterTemp',
+                            formData.evapLeavingWaterTemp,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'evapLeavingWaterTemp')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-2">
+                          <Thermometer className="w-4 h-4" /> Evap approach temp
+                          <span className="text-xs text-muted-foreground">
+                            (NMT {equipmentLimits.chiller.evapApproachTemp.max}{' '}
+                            {equipmentLimits.chiller.evapApproachTemp.unit})
+                          </span>
+                        </Label>
+                        <Input
+                          type="number"
+                          step="0.1"
+                          value={formData.evapApproachTemp}
+                          onChange={(e) =>
+                            setFormData({ ...formData, evapApproachTemp: e.target.value })
+                          }
+                          placeholder="e.g., 4"
+                          className={isFormValueOutOfLimit(
+                            'chiller',
+                            'evapApproachTemp',
+                            formData.evapApproachTemp
+                          )
+                            ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                            : undefined}
+                        />
+                        {isFormValueOutOfLimit(
+                          'chiller',
+                          'evapApproachTemp',
+                          formData.evapApproachTemp,
+                        ) && (
+                          <p className="text-xs text-destructive mt-1">
+                            {getLimitErrorMessage('chiller', 'evapApproachTemp')}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Condenser section */}
+                    <div className="mt-4 border-t pt-4 space-y-4">
+                      <Label className="text-sm font-semibold">Condenser</Label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Gauge className="w-4 h-4" /> Cond water inlet pressure
+                            <span className="text-xs text-muted-foreground">
+                              (NLT {equipmentLimits.chiller.condWaterInletPressure.min}{' '}
+                              {equipmentLimits.chiller.condWaterInletPressure.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.condWaterInletPressure}
+                            onChange={(e) =>
+                              setFormData({ ...formData, condWaterInletPressure: e.target.value })
+                            }
+                            placeholder="e.g., 1.5"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'condWaterInletPressure',
+                              formData.condWaterInletPressure
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'condWaterInletPressure',
+                            formData.condWaterInletPressure,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'condWaterInletPressure')}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Gauge className="w-4 h-4" /> Cond water outlet pressure
+                            <span className="text-xs text-muted-foreground">
+                              (NLT {equipmentLimits.chiller.condWaterOutletPressure.min}{' '}
+                              {equipmentLimits.chiller.condWaterOutletPressure.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.condWaterOutletPressure}
+                            onChange={(e) =>
+                              setFormData({ ...formData, condWaterOutletPressure: e.target.value })
+                            }
+                            placeholder="e.g., 1.0"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'condWaterOutletPressure',
+                              formData.condWaterOutletPressure
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'condWaterOutletPressure',
+                            formData.condWaterOutletPressure,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'condWaterOutletPressure')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Thermometer className="w-4 h-4" /> Cond entering water temp
+                            <span className="text-xs text-muted-foreground">
+                              (NMT {equipmentLimits.chiller.condEnteringWaterTemp.max}{' '}
+                              {equipmentLimits.chiller.condEnteringWaterTemp.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.condEnteringWaterTemp}
+                            onChange={(e) =>
+                              setFormData({ ...formData, condEnteringWaterTemp: e.target.value })
+                            }
+                            placeholder="e.g., 35"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'condEnteringWaterTemp',
+                              formData.condEnteringWaterTemp
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'condEnteringWaterTemp',
+                            formData.condEnteringWaterTemp,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'condEnteringWaterTemp')}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Thermometer className="w-4 h-4" /> Cond leaving water temp
+                            <span className="text-xs text-muted-foreground">
+                              (NMT {equipmentLimits.chiller.condLeavingWaterTemp.max}{' '}
+                              {equipmentLimits.chiller.condLeavingWaterTemp.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.condLeavingWaterTemp}
+                            onChange={(e) =>
+                              setFormData({ ...formData, condLeavingWaterTemp: e.target.value })
+                            }
+                            placeholder="e.g., 40"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'condLeavingWaterTemp',
+                              formData.condLeavingWaterTemp
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'condLeavingWaterTemp',
+                            formData.condLeavingWaterTemp,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'condLeavingWaterTemp')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-2">
+                          <Thermometer className="w-4 h-4" /> Cond approach temp
+                          <span className="text-xs text-muted-foreground">
+                            (NMT {equipmentLimits.chiller.condApproachTemp.max}{' '}
+                            {equipmentLimits.chiller.condApproachTemp.unit})
+                          </span>
+                        </Label>
+                        <Input
+                          type="number"
+                          step="0.1"
+                          value={formData.condApproachTemp}
+                          onChange={(e) =>
+                            setFormData({ ...formData, condApproachTemp: e.target.value })
+                          }
+                          placeholder="e.g., 6"
+                          className={isFormValueOutOfLimit(
+                            'chiller',
+                            'condApproachTemp',
+                            formData.condApproachTemp
+                          )
+                            ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                            : undefined}
+                        />
+                        {isFormValueOutOfLimit(
+                          'chiller',
+                          'condApproachTemp',
+                          formData.condApproachTemp,
+                        ) && (
+                          <p className="text-xs text-destructive mt-1">
+                            {getLimitErrorMessage('chiller', 'condApproachTemp')}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Compressor / electrical section */}
+                    <div className="mt-4 border-t pt-4 space-y-4">
+                      <Label className="text-sm font-semibold">Compressor / Electrical</Label>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Gauge className="w-4 h-4" /> Chiller control signal (%)
+                            <span className="text-xs text-muted-foreground">
+                              (NMT {equipmentLimits.chiller.chillerControlSignal.max}{' '}
+                              {equipmentLimits.chiller.chillerControlSignal.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.chillerControlSignal}
+                            onChange={(e) =>
+                              setFormData({ ...formData, chillerControlSignal: e.target.value })
+                            }
+                            placeholder="e.g., 75"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'chillerControlSignal',
+                              formData.chillerControlSignal
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'chillerControlSignal',
+                            formData.chillerControlSignal,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'chillerControlSignal')}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Gauge className="w-4 h-4" /> Average motor current (A)
+                            <span className="text-xs text-muted-foreground">
+                              (NMT {equipmentLimits.chiller.avgMotorCurrent.max}{' '}
+                              {equipmentLimits.chiller.avgMotorCurrent.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.avgMotorCurrent}
+                            onChange={(e) =>
+                              setFormData({ ...formData, avgMotorCurrent: e.target.value })
+                            }
+                            placeholder="e.g., 85"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'avgMotorCurrent',
+                              formData.avgMotorCurrent
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'avgMotorCurrent',
+                            formData.avgMotorCurrent,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'avgMotorCurrent')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Clock className="w-4 h-4" /> Compressor running time (min)
+                            <span className="text-xs text-muted-foreground">
+                              (NMT {equipmentLimits.chiller.compressorRunningTimeMin.max}{' '}
+                              {equipmentLimits.chiller.compressorRunningTimeMin.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="1"
+                            value={formData.compressorRunningTimeMin}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                compressorRunningTimeMin: e.target.value,
+                              })
+                            }
+                            placeholder="e.g., 60"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'compressorRunningTimeMin',
+                              formData.compressorRunningTimeMin
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'compressorRunningTimeMin',
+                            formData.compressorRunningTimeMin,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'compressorRunningTimeMin')}
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="flex items-center gap-2">
+                            <Gauge className="w-4 h-4" /> Starter energy consumption (kWh)
+                            <span className="text-xs text-muted-foreground">
+                              (NMT {equipmentLimits.chiller.starterEnergyKwh.max}{' '}
+                              {equipmentLimits.chiller.starterEnergyKwh.unit})
+                            </span>
+                          </Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            value={formData.starterEnergyKwh}
+                            onChange={(e) =>
+                              setFormData({ ...formData, starterEnergyKwh: e.target.value })
+                            }
+                            placeholder="e.g., 120"
+                            className={isFormValueOutOfLimit(
+                              'chiller',
+                              'starterEnergyKwh',
+                              formData.starterEnergyKwh
+                            )
+                              ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                              : undefined}
+                          />
+                          {isFormValueOutOfLimit(
+                            'chiller',
+                            'starterEnergyKwh',
+                            formData.starterEnergyKwh,
+                          ) && (
+                            <p className="text-xs text-destructive mt-1">
+                              {getLimitErrorMessage('chiller', 'starterEnergyKwh')}
+                            </p>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -1124,7 +2210,19 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                           value={formData.coolingTowerSupplyTemp}
                           onChange={(e) => setFormData({ ...formData, coolingTowerSupplyTemp: e.target.value })}
                           placeholder="e.g., 25"
+                          className={isFormValueOutOfLimit('chiller', 'coolingTowerSupplyTemp', formData.coolingTowerSupplyTemp)
+                            ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                            : undefined}
                         />
+                        {isFormValueOutOfLimit(
+                          'chiller',
+                          'coolingTowerSupplyTemp',
+                          formData.coolingTowerSupplyTemp,
+                        ) && (
+                          <p className="text-xs text-destructive mt-1">
+                            {getLimitErrorMessage('chiller', 'coolingTowerSupplyTemp')}
+                          </p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label className="flex items-center gap-2">
@@ -1137,7 +2235,19 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                           value={formData.coolingTowerReturnTemp}
                           onChange={(e) => setFormData({ ...formData, coolingTowerReturnTemp: e.target.value })}
                           placeholder="e.g., 30"
+                          className={isFormValueOutOfLimit('chiller', 'coolingTowerReturnTemp', formData.coolingTowerReturnTemp)
+                            ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                            : undefined}
                         />
+                        {isFormValueOutOfLimit(
+                          'chiller',
+                          'coolingTowerReturnTemp',
+                          formData.coolingTowerReturnTemp,
+                        ) && (
+                          <p className="text-xs text-destructive mt-1">
+                            {getLimitErrorMessage('chiller', 'coolingTowerReturnTemp')}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -1153,7 +2263,19 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                           value={formData.ctDifferentialTemp}
                           onChange={(e) => setFormData({ ...formData, ctDifferentialTemp: e.target.value })}
                           placeholder="e.g., 5"
+                          className={isFormValueOutOfLimit('chiller', 'ctDifferentialTemp', formData.ctDifferentialTemp)
+                            ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                            : undefined}
                         />
+                        {isFormValueOutOfLimit(
+                          'chiller',
+                          'ctDifferentialTemp',
+                          formData.ctDifferentialTemp,
+                        ) && (
+                          <p className="text-xs text-destructive mt-1">
+                            {getLimitErrorMessage('chiller', 'ctDifferentialTemp')}
+                          </p>
+                        )}
                       </div>
                       <div className="space-y-2">
                         <Label className="flex items-center gap-2">
@@ -1166,7 +2288,19 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                           value={formData.chillerWaterInletPressure}
                           onChange={(e) => setFormData({ ...formData, chillerWaterInletPressure: e.target.value })}
                           placeholder="e.g., 2"
+                          className={isFormValueOutOfLimit('chiller', 'chillerWaterInletPressure', formData.chillerWaterInletPressure)
+                            ? 'border-destructive bg-destructive/5 text-destructive font-semibold'
+                            : undefined}
                         />
+                        {isFormValueOutOfLimit(
+                          'chiller',
+                          'chillerWaterInletPressure',
+                          formData.chillerWaterInletPressure,
+                        ) && (
+                          <p className="text-xs text-destructive mt-1">
+                            {getLimitErrorMessage('chiller', 'chillerWaterInletPressure')}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -1179,6 +2313,501 @@ export default function ELogBookPage({ equipmentType }: ELogBookPageProps = {}) 
                         onChange={(e) => setFormData({ ...formData, chillerMakeupWaterFlow: e.target.value })}
                         placeholder="e.g., 10000"
                       />
+                    </div>
+
+                    {/* Operator Sign & Date - full width block after make up water flow */}
+                    <div className="mt-6 space-y-2">
+                      <Label>Operator Sign & Date</Label>
+                      <Input
+                        type="text"
+                        value={formData.operatorSign}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            operatorSign: e.target.value,
+                          })
+                        }
+                        placeholder="e.g., Operator name & date"
+                        className="border-2 border-primary bg-primary/5 font-semibold"
+                      />
+                    </div>
+
+                    {/* Footer Section - equipment status and chemicals */}
+                    <div className="border-t pt-4 mt-2 space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Cooling Tower Pump</Label>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-medium">Pump 1:</span>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.coolingTowerPump1 === 'ON'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      coolingTowerPump1: 'ON',
+                                    }))
+                                  }
+                                >
+                                  ON
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.coolingTowerPump1 === 'OFF'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      coolingTowerPump1: 'OFF',
+                                    }))
+                                  }
+                                >
+                                  OFF
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-medium">Pump 2:</span>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.coolingTowerPump2 === 'ON'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      coolingTowerPump2: 'ON',
+                                    }))
+                                  }
+                                >
+                                  ON
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.coolingTowerPump2 === 'OFF'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      coolingTowerPump2: 'OFF',
+                                    }))
+                                  }
+                                >
+                                  OFF
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Chilled Water Pump</Label>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-medium">Pump 1:</span>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.chilledWaterPump1 === 'ON'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      chilledWaterPump1: 'ON',
+                                    }))
+                                  }
+                                >
+                                  ON
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.chilledWaterPump1 === 'OFF'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      chilledWaterPump1: 'OFF',
+                                    }))
+                                  }
+                                >
+                                  OFF
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-medium">Pump 2:</span>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.chilledWaterPump2 === 'ON'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      chilledWaterPump2: 'ON',
+                                    }))
+                                  }
+                                >
+                                  ON
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.chilledWaterPump2 === 'OFF'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      chilledWaterPump2: 'OFF',
+                                    }))
+                                  }
+                                >
+                                  OFF
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Cooling Tower Fan</Label>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-medium">Fan 1:</span>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.coolingTowerFan1 === 'ON'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      coolingTowerFan1: 'ON',
+                                    }))
+                                  }
+                                >
+                                  ON
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.coolingTowerFan1 === 'OFF'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      coolingTowerFan1: 'OFF',
+                                    }))
+                                  }
+                                >
+                                  OFF
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-medium">Fan 2:</span>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.coolingTowerFan2 === 'ON'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      coolingTowerFan2: 'ON',
+                                    }))
+                                  }
+                                >
+                                  ON
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.coolingTowerFan2 === 'OFF'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      coolingTowerFan2: 'OFF',
+                                    }))
+                                  }
+                                >
+                                  OFF
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="text-sm font-medium">Fan 3:</span>
+                              <div className="flex gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.coolingTowerFan3 === 'ON'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      coolingTowerFan3: 'ON',
+                                    }))
+                                  }
+                                >
+                                  ON
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={
+                                    formData.coolingTowerFan3 === 'OFF'
+                                      ? 'default'
+                                      : 'outline'
+                                  }
+                                  onClick={() =>
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      coolingTowerFan3: 'OFF',
+                                    }))
+                                  }
+                                >
+                                  OFF
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Cooling Tower Blow Down Time (Minutes)</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            step="1"
+                            value={formData.coolingTowerBlowdownTimeMin}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                coolingTowerBlowdownTimeMin: e.target.value,
+                              })
+                            }
+                            placeholder="e.g., 30"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Summary display for running pumps and fans */}
+                      <div className="pt-2 text-sm text-muted-foreground">
+                        <div>
+                          <span className="font-semibold">Running Pumps:</span>{' '}
+                          {[
+                            formData.coolingTowerPump1,
+                            formData.coolingTowerPump2,
+                            formData.chilledWaterPump1,
+                            formData.chilledWaterPump2,
+                          ].filter((s) => s === 'ON').length}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Running Fans:</span>{' '}
+                          {[
+                            formData.coolingTowerFan1,
+                            formData.coolingTowerFan2,
+                            formData.coolingTowerFan3,
+                          ].filter((s) => s === 'ON').length}
+                        </div>
+                      </div>
+
+                      {/* Cooling tower chemicals table - 3 columns matching physical sheet */}
+                      <div className="mt-4 space-y-3">
+                        <Label className="text-sm">
+                          Cooling tower chemicals to be added &amp; to be mentioned below in table
+                          column:
+                        </Label>
+
+                        {/* Column headers */}
+                        <div className="grid grid-cols-3 gap-4 text-sm font-semibold">
+                          <div>Cooling Tower Pump</div>
+                          <div>Chilled Water Pump</div>
+                          <div>Cooling Tower Fan</div>
+                        </div>
+
+                        {/* Chemical names row */}
+                        <div className="grid grid-cols-3 gap-4">
+                          <div className="space-y-1">
+                            <Label className="text-xs">Chemical Name</Label>
+                            <Input
+                              type="text"
+                              value={formData.coolingTowerChemicalName}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  coolingTowerChemicalName: e.target.value,
+                                })
+                              }
+                              placeholder="e.g., CU450"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Chemical Name</Label>
+                            <Input
+                              type="text"
+                              value={formData.chilledWaterPumpChemicalName}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  chilledWaterPumpChemicalName: e.target.value,
+                                })
+                              }
+                              placeholder="e.g., C1810"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Chemical Name</Label>
+                            <Input
+                              type="text"
+                              value={formData.coolingTowerFanChemicalName}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  coolingTowerFanChemicalName: e.target.value,
+                                })
+                              }
+                              placeholder="e.g., C3003"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Quantities row */}
+                        <div className="grid grid-cols-3 gap-4">
+                          <div className="space-y-1">
+                            <Label className="text-xs">Quantity (Kg)</Label>
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={formData.coolingTowerChemicalQtyPerDay}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  coolingTowerChemicalQtyPerDay: e.target.value,
+                                })
+                              }
+                              placeholder="e.g., 0.27"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Quantity (Kg)</Label>
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={formData.chilledWaterPumpChemicalQtyKg}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  chilledWaterPumpChemicalQtyKg: e.target.value,
+                                })
+                              }
+                              placeholder="e.g., 0.32"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Quantity (Kg)</Label>
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={formData.coolingTowerFanChemicalQtyKg}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  coolingTowerFanChemicalQtyKg: e.target.value,
+                                })
+                              }
+                              placeholder="e.g., 0.42"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 mt-6">
+                        <div className="space-y-2">
+                          <Label>Recording Frequency</Label>
+                          <Input
+                            type="text"
+                            value={formData.recordingFrequency}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                recordingFrequency: e.target.value,
+                              })
+                            }
+                            placeholder="e.g., Once in 4 hours"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Verified By (Sign & Date)</Label>
+                          <Input
+                            type="text"
+                            value={formData.verifiedBy}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                verifiedBy: e.target.value,
+                              })
+                            }
+                            placeholder="e.g., Supervisor name & date"
+                          />
+                        </div>
+                      </div>
                     </div>
                   </>
                 )}

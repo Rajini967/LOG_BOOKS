@@ -18,7 +18,7 @@ class ChillerLog(models.Model):
     equipment_id = models.CharField(max_length=100, db_index=True)
     site_id = models.CharField(max_length=100, blank=True, null=True)
     
-    # Chiller specific readings
+    # Chiller specific readings - existing summary parameters
     chiller_supply_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="Chiller supply temperature (°C)")
     chiller_return_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="Chiller return temperature (°C)")
     cooling_tower_supply_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="Cooling tower supply temperature (°C)")
@@ -26,6 +26,187 @@ class ChillerLog(models.Model):
     ct_differential_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="CT differential temperature (°C)")
     chiller_water_inlet_pressure = models.FloatField(validators=[MinValueValidator(0)], help_text="Chiller water inlet pressure (bar)")
     chiller_makeup_water_flow = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Chiller makeup water flow (LPH)")
+
+    # Detailed readings from physical sheet
+    # Evaporator section
+    evap_water_inlet_pressure = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Evap water inlet pressure (e.g. NLT 2.3 kg/cm²)"
+    )
+    evap_water_outlet_pressure = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Evap water outlet pressure"
+    )
+    evap_entering_water_temp = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Evap entering water temperature (NMT 18 °C)"
+    )
+    evap_leaving_water_temp = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Evap leaving water temperature (e.g. 13 °C)"
+    )
+    evap_approach_temp = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Evap approach temperature (NMT 4 °C)"
+    )
+
+    # Condenser section
+    cond_water_inlet_pressure = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Cond water inlet pressure (e.g. NLT 1.5 kg/cm²)"
+    )
+    cond_water_outlet_pressure = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Cond water outlet pressure (e.g. NLT 1.0 kg/cm²)"
+    )
+    cond_entering_water_temp = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Cond entering water temperature (NMT 35 °C)"
+    )
+    cond_leaving_water_temp = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Cond leaving water temperature (NMT 40 °C)"
+    )
+    cond_approach_temp = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Cond approach temperature"
+    )
+
+    # Compressor / electrical section
+    chiller_control_signal = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Chiller control signal (%)"
+    )
+    avg_motor_current = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Average motor current (A)"
+    )
+    compressor_running_time_min = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Compressor running time (minutes)"
+    )
+    starter_energy_kwh = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Starter energy consumption (kWh)"
+    )
+
+    # Footer section - equipment status and chemicals (from physical log sheet)
+    cooling_tower_pump_status = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Cooling tower pump 1/2 status (On/Off)"
+    )
+    chilled_water_pump_status = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Chilled water pump 1/2 status (On/Off)"
+    )
+    cooling_tower_fan_status = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Cooling tower fan 1/2/3 status (On/Off)"
+    )
+    cooling_tower_blowoff_valve_status = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Cooling tower blow off valve status (Open/Close)"
+    )
+    cooling_tower_blowdown_time_min = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Cooling tower blow down time (minutes)"
+    )
+    # Cooling tower chemicals table - per equipment column
+    # Column 1 - Cooling Tower Pump
+    cooling_tower_chemical_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Cooling tower pump chemical name"
+    )
+    cooling_tower_chemical_qty_per_day = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Cooling tower pump chemical quantity added per day (kg)"
+    )
+    # Column 2 - Chilled Water Pump
+    chilled_water_pump_chemical_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Chilled water pump chemical name"
+    )
+    chilled_water_pump_chemical_qty_kg = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Chilled water pump chemical quantity added per day (kg)"
+    )
+    # Column 3 - Cooling Tower Fan
+    cooling_tower_fan_chemical_name = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Cooling tower fan chemical name"
+    )
+    cooling_tower_fan_chemical_qty_kg = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Cooling tower fan chemical quantity added per day (kg)"
+    )
+    recording_frequency = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Recording frequency (e.g. Once in 4 hours)"
+    )
+    operator_sign = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Operator Sign & Date"
+    )
+    verified_by = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Verified by (Sign & Date)"
+    )
     
     remarks = models.TextField(blank=True, null=True)
     operator = models.ForeignKey(
@@ -56,3 +237,39 @@ class ChillerLog(models.Model):
 
     def __str__(self):
         return f"Chiller {self.equipment_id} - {self.timestamp}"
+
+
+class ChillerEquipmentStatusAudit(models.Model):
+    """Audit trail for pump/fan status changes on chiller logs."""
+
+    FIELD_CHOICES = [
+        ('cooling_tower_pump_status', 'Cooling Tower Pump 1/2'),
+        ('chilled_water_pump_status', 'Chilled Water Pump 1/2'),
+        ('cooling_tower_fan_status', 'Cooling Tower Fan 1/2/3'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    chiller_log = models.ForeignKey(
+        ChillerLog,
+        on_delete=models.CASCADE,
+        related_name='equipment_status_audits',
+    )
+    field_name = models.CharField(max_length=64, choices=FIELD_CHOICES)
+    old_value = models.CharField(max_length=100, blank=True, null=True)
+    new_value = models.CharField(max_length=100)
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='chiller_equipment_status_changes',
+    )
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'chiller_equipment_status_audits'
+        ordering = ['-changed_at']
+        verbose_name = 'Chiller Equipment Status Audit'
+        verbose_name_plural = 'Chiller Equipment Status Audits'
+
+    def __str__(self):
+        return f"{self.get_field_name_display()} change on log {self.chiller_log_id}"
