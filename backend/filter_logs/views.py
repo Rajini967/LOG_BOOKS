@@ -1,0 +1,217 @@
+from django.utils import timezone
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+
+from accounts.permissions import CanApproveReports, CanLogEntries
+from reports.utils import log_limit_change
+
+from .models import FilterLog
+from .serializers import FilterLogSerializer
+
+
+class FilterLogViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    serializer_class = FilterLogSerializer
+    queryset = FilterLog.objects.all()
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update']:
+            return [IsAuthenticated(), CanLogEntries()]
+        elif self.action == 'approve':
+            return [IsAuthenticated(), CanApproveReports()]
+        return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        serializer.save(
+            operator=self.request.user,
+            operator_name=self.request.user.name or self.request.user.email,
+        )
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        tracked_fields = [
+            'equipment_id',
+            'category',
+            'filter_no',
+            'filter_micron',
+            'filter_size',
+            'installed_date',
+            'integrity_done_date',
+            'integrity_due_date',
+            'cleaning_done_date',
+            'cleaning_due_date',
+            'replacement_due_date',
+            'remarks',
+            'status',
+            'timestamp',
+        ]
+        old_values = {field: getattr(instance, field) for field in tracked_fields}
+
+        response = super().update(request, *args, **kwargs)
+
+        updated = self.get_object()
+        user = request.user
+        extra_base = {
+            "equipment_id": updated.equipment_id,
+            "timestamp": timezone.localtime(updated.timestamp).isoformat() if updated.timestamp else None,
+        }
+
+        for field in tracked_fields:
+            before = old_values.get(field)
+            after = getattr(updated, field)
+            if before == after:
+                continue
+            extra = dict(extra_base)
+            extra["field_label"] = field
+            log_limit_change(
+                user=user,
+                object_type="filter_log",
+                key=str(updated.id),
+                field_name=field,
+                old=before,
+                new=after,
+                extra=extra,
+                event_type="log_update",
+            )
+
+        return response
+
+    @action(detail=True, methods=['post'])
+    def correct(self, request, pk=None):
+        """
+        Create a new filter log entry as a correction of a rejected or pending-secondary-approval log.
+        """
+        original = self.get_object()
+        if original.status not in ('rejected', 'pending_secondary_approval'):
+            return Response(
+                {'error': 'Only rejected or pending secondary approval entries can be corrected as new entries.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = request.data.copy()
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+
+        validated = dict(serializer.validated_data)
+        timestamp = validated.pop('timestamp', None)
+
+        payload = {
+            **validated,
+            'corrects': original,
+            'operator': request.user,
+            'operator_name': request.user.name or request.user.email,
+            'equipment_id': original.equipment_id,
+            'status': 'pending_secondary_approval',
+        }
+        if timestamp is not None:
+            payload['timestamp'] = timestamp
+
+        new_log = FilterLog.objects.create(**payload)
+
+        tracked_fields = [
+            'equipment_id',
+            'category',
+            'filter_no',
+            'filter_micron',
+            'filter_size',
+            'installed_date',
+            'integrity_done_date',
+            'integrity_due_date',
+            'cleaning_done_date',
+            'cleaning_due_date',
+            'replacement_due_date',
+            'remarks',
+            'status',
+            'timestamp',
+        ]
+        extra_base = {
+            "equipment_id": original.equipment_id,
+            "original_id": str(original.id),
+            "correction_id": str(new_log.id),
+        }
+        for field in tracked_fields:
+            before = getattr(original, field)
+            after = getattr(new_log, field)
+            if before == after:
+                continue
+            extra = dict(extra_base)
+            extra["field_label"] = field
+            log_limit_change(
+                user=request.user,
+                object_type="filter_log",
+                key=str(new_log.id),
+                field_name=field,
+                old=before,
+                new=after,
+                extra=extra,
+                event_type="log_correction",
+            )
+
+        serializer = self.get_serializer(new_log)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """
+        Approve or reject a filter log.
+        - Operator (Log Book Done By) cannot approve own entries.
+        - Only pending/draft/pending_secondary_approval can be approved/rejected.
+        - Secondary approval must be by a different user than the rejector.
+        """
+        log = self.get_object()
+        action_type = request.data.get('action', 'approve')
+        remarks = (request.data.get('remarks') or '').strip()
+
+        if action_type == 'reject' and not remarks:
+            raise ValidationError({'remarks': ['Comment is required when rejecting.']})
+
+        if action_type == 'approve':
+            if log.operator_id and log.operator_id == request.user.id:
+                raise ValidationError(
+                    {'detail': ['Log Book Done By and Approved By users must be different.']}
+                )
+
+        if log.status not in ('draft', 'pending', 'pending_secondary_approval'):
+            raise ValidationError(
+                {'detail': ['Only draft, pending or pending secondary approval entries can be approved or rejected.']}
+            )
+
+        now = timezone.now()
+
+        if action_type == 'reject':
+            log.status = 'rejected'
+            log.approved_by = request.user
+            log.approved_at = now
+        else:
+            if log.status == 'pending_secondary_approval':
+                if log.approved_by and log.approved_by_id == request.user.id:
+                    raise ValidationError(
+                        {'detail': ['Secondary approver must be different from the primary approver.']}
+                    )
+                log.secondary_approved_by = request.user
+                log.secondary_approved_at = now
+                log.status = 'approved'
+            else:
+                log.approved_by = request.user
+                log.approved_at = now
+                log.status = 'approved'
+
+        log.remarks = remarks or log.remarks
+        log.save(update_fields=[
+            'status',
+            'approved_by',
+            'approved_at',
+            'secondary_approved_by',
+            'secondary_approved_at',
+            'remarks',
+            'updated_at',
+        ])
+
+        serializer = self.get_serializer(log)
+        return Response(serializer.data)
+

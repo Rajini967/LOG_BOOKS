@@ -12,6 +12,7 @@ class ChillerLog(models.Model):
         ('pending', 'Pending'),
         ('approved', 'Approved'),
         ('rejected', 'Rejected'),
+        ('pending_secondary_approval', 'Pending secondary approval'),
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -217,7 +218,7 @@ class ChillerLog(models.Model):
         related_name='chiller_logs'
     )
     operator_name = models.CharField(max_length=255)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='draft')
     approved_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
@@ -226,6 +227,22 @@ class ChillerLog(models.Model):
         related_name='approved_chiller_logs'
     )
     approved_at = models.DateTimeField(blank=True, null=True)
+    secondary_approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='secondary_approved_chiller_logs'
+    )
+    secondary_approved_at = models.DateTimeField(blank=True, null=True)
+    corrects = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='corrections',
+        help_text="If this is a correction, points to the original log entry.",
+    )
     timestamp = models.DateTimeField(auto_now_add=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

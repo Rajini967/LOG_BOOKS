@@ -14,6 +14,7 @@ urlpatterns = [
     path('api/', include('chemical_prep.urls')),
     path('api/', include('chiller_logs.urls')),
     path('api/', include('boiler_logs.urls')),
+    path('api/', include('filter_logs.urls')),
     path('api/', include('compressor_logs.urls')),
     path('api/', include('air_validation.urls')),
     path('api/', include('test_certificates.urls')),

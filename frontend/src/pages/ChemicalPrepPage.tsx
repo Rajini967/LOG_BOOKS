@@ -56,7 +56,9 @@ interface ChemicalPrep {
   remarks: string;
   checkedBy: string;
   timestamp: Date;
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'draft' | 'pending_secondary_approval';
+  operator_id?: string;
+  approved_by_id?: string;
 }
 
 // TODO: Replace with API call to fetch chemical preparations
@@ -230,7 +232,7 @@ export default function ChemicalPrepPage() {
       
       // Refresh data from API
       const data = await chemicalPrepAPI.list();
-      const formattedPreps: ChemicalPrep[] = data.map((prep: any) => ({
+        const formattedPreps: ChemicalPrep[] = data.map((prep: any) => ({
         id: prep.id,
         logType: prep.log_type,
         date: format(new Date(prep.timestamp), 'yyyy-MM-dd'),
@@ -249,7 +251,9 @@ export default function ChemicalPrepPage() {
         remarks: prep.remarks || '',
         checkedBy: prep.checked_by || prep.operator_name,
         timestamp: new Date(prep.timestamp),
-        status: prep.status as 'pending' | 'approved' | 'rejected',
+          status: prep.status as ChemicalPrep['status'],
+          operator_id: prep.operator_id,
+          approved_by_id: prep.approved_by_id,
       }));
       setPreps(formattedPreps.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
     } catch (error: any) {
@@ -392,8 +396,18 @@ export default function ChemicalPrepPage() {
         {/* Actions Bar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Badge variant="pending">{preps.filter(p => p.status === 'pending').length} Pending</Badge>
-            <Badge variant="success">{preps.filter(p => p.status === 'approved').length} Approved</Badge>
+            <Badge variant="secondary">
+              {preps.filter((p) => p.status === 'draft').length} Draft
+            </Badge>
+            <Badge variant="pending">
+              {preps.filter((p) => p.status === 'pending' || p.status === 'pending_secondary_approval').length} Pending
+            </Badge>
+            <Badge variant="success">
+              {preps.filter((p) => p.status === 'approved').length} Approved
+            </Badge>
+            <Badge variant="destructive">
+              {preps.filter((p) => p.status === 'rejected').length} Rejected
+            </Badge>
           </div>
 
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -800,7 +814,13 @@ export default function ChemicalPrepPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => handleApproveClick(prep.id)}
+                                onClick={() => {
+                                  if (prep.operator_id === user?.id) {
+                                    toast.error('The log book entry must be approved by a different user than the operator (Log Book Done By).');
+                                    return;
+                                  }
+                                  handleApproveClick(prep.id);
+                                }}
                                 className="h-7 text-xs"
                               >
                                 Approve

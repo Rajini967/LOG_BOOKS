@@ -13,6 +13,7 @@ import ELogBookLandingPage from "./pages/ELogBookLandingPage";
 import ELogBookPage from "./pages/ELogBookPage";
 import BoilerLogBookPage from "./pages/BoilerLogBookPage";
 import ChemicalLogBookPage from "./pages/ChemicalLogBookPage";
+import FilterLogBookPage from "./pages/FilterLogBookPage";
 import HVACValidationPage from "./pages/HVACValidationPage";
 import AirVelocityTestPage from "./pages/AirVelocityTestPage";
 import FilterIntegrityTestPage from "./pages/FilterIntegrityTestPage";
@@ -47,6 +48,7 @@ const App = () => (
               <Route path="/e-log-book/chiller" element={<ELogBookPage equipmentType="chiller" />} />
               <Route path="/e-log-book/boiler" element={<BoilerLogBookPage />} />
               <Route path="/e-log-book/chemical" element={<ChemicalLogBookPage />} />
+              <Route path="/e-log-book/filter" element={<FilterLogBookPage />} />
               <Route path="/hvac-validation" element={<HVACValidationPage />} />
               <Route path="/hvac-validation/air-velocity-test" element={<AirVelocityTestPage />} />
               <Route path="/hvac-validation/filter-integrity-test" element={<FilterIntegrityTestPage />} />

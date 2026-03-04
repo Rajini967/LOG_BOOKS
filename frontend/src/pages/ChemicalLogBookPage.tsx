@@ -18,7 +18,8 @@ import { format } from "date-fns";
 import { toast } from "sonner";
 import { chemicalPrepAPI } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { Clock, Save, Filter, X, Plus, Trash2, CheckCircle, XCircle, Edit } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Clock, Save, Filter, X, Plus, Trash2, CheckCircle, XCircle, Edit, History } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -43,12 +44,12 @@ interface ChemicalPrepLog {
   equipmentName: string;
   chemicalName: string;
   chemicalPercent?: number;
+  chemicalCategory?: "major" | "minor" | null;
+  chemicalConcentration?: number | null;
   solutionConcentration?: number | null;
   waterQty?: number | null;
   chemicalQty: number;
   batchNo?: string;
-  quantityTaken?: number;
-  reason?: string;
   doneBy?: string;
   date: string;
   time: string;
@@ -56,7 +57,12 @@ interface ChemicalPrepLog {
   comment?: string;
   checkedBy: string;
   timestamp: Date;
-  status: "pending" | "approved" | "rejected" | "draft";
+  status: "pending" | "approved" | "rejected" | "draft" | "pending_secondary_approval";
+  /** User who approved or rejected (rejector for rejected / pending_secondary_approval entries) */
+  operator_id?: string;
+  approved_by_id?: string;
+  corrects_id?: string;
+  has_corrections?: boolean;
 }
 
 const CHEMICAL_NAMES = [
@@ -81,6 +87,8 @@ const ChemicalLogBookPage: React.FC = () => {
   const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
   const [approveCommentOpen, setApproveCommentOpen] = useState(false);
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
+  const [rejectCommentOpen, setRejectCommentOpen] = useState(false);
+  const [rejectComment, setRejectComment] = useState("");
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [approvalComment, setApprovalComment] = useState("");
@@ -92,20 +100,21 @@ const ChemicalLogBookPage: React.FC = () => {
     equipmentName: "",
     chemicalName: "",
     chemicalCategory: "major" as "major" | "minor",
+    chemicalConcentration: "",
     solutionConcentration: "",
     waterQty: "",
     chemicalQty: "",
     batchNo: "",
-    quantityTaken: "",
-    reason: "",
     doneBy: "",
     remarks: "",
+    date: "",
+    time: "",
   });
 
   const [filters, setFilters] = useState({
     fromDate: "",
     toDate: "",
-    status: "all" as "all" | "pending" | "approved" | "rejected",
+    status: "all" as "all" | "pending" | "approved" | "rejected" | "pending_secondary_approval",
     equipmentName: "",
     checkedBy: "",
     fromTime: "",
@@ -128,12 +137,12 @@ const ChemicalLogBookPage: React.FC = () => {
           equipmentName: prep.equipment_name,
           chemicalName: prep.chemical_name,
           chemicalPercent: prep.chemical_percent ?? undefined,
+          chemicalCategory: prep.chemical_category ?? null,
+          chemicalConcentration: prep.chemical_concentration ?? null,
           solutionConcentration: prep.solution_concentration,
           waterQty: prep.water_qty,
           chemicalQty: prep.chemical_qty,
           batchNo: prep.batch_no || "",
-          quantityTaken: prep.quantity_taken ?? undefined,
-          reason: prep.reason || "",
           doneBy: prep.done_by || prep.checked_by || prep.operator_name,
           date: format(timestamp, "yyyy-MM-dd"),
           time: format(timestamp, "HH:mm:ss"),
@@ -142,6 +151,10 @@ const ChemicalLogBookPage: React.FC = () => {
           checkedBy: prep.checked_by || prep.operator_name,
           timestamp,
           status: prep.status as ChemicalPrepLog["status"],
+          operator_id: prep.operator_id,
+          approved_by_id: prep.approved_by_id,
+          corrects_id: prep.corrects_id,
+          has_corrections: prep.has_corrections,
         });
       });
 
@@ -232,7 +245,7 @@ const ChemicalLogBookPage: React.FC = () => {
   }, [filters]);
 
   const pendingDraftLogs = useMemo(
-    () => filteredLogs.filter((log) => log.status === "pending" || log.status === "draft"),
+    () => filteredLogs.filter((log) => log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval"),
     [filteredLogs],
   );
   const pendingDraftIds = useMemo(() => pendingDraftLogs.map((log) => log.id), [pendingDraftLogs]);
@@ -268,7 +281,6 @@ const ChemicalLogBookPage: React.FC = () => {
       }
       const numericFields: { key: keyof typeof formData; label: string }[] = [
         { key: "chemicalQty", label: "Chemical quantity" },
-        { key: "quantityTaken", label: "Quantity taken" },
       ];
       if (formData.chemicalCategory === "major") {
         numericFields.unshift(
@@ -311,58 +323,76 @@ const ChemicalLogBookPage: React.FC = () => {
         formData.solutionConcentration !== "" ? parseFloat(formData.solutionConcentration) : undefined;
       const waterQtyValue =
         formData.waterQty !== "" ? parseFloat(formData.waterQty) : undefined;
+      const chemicalConcentrationValue =
+        formData.chemicalConcentration !== "" ? parseFloat(formData.chemicalConcentration) : undefined;
 
-      const prepData = {
+      const prepData: Record<string, unknown> = {
         equipment_name: formData.equipmentName,
         chemical_name: formData.chemicalName,
         chemical_percent: undefined,
+        chemical_concentration: chemicalConcentrationValue,
         chemical_category: formData.chemicalCategory,
         solution_concentration: solutionConcentrationValue,
         water_qty: waterQtyValue,
         chemical_qty: parseFloat(formData.chemicalQty),
         batch_no: formData.batchNo || undefined,
-        quantity_taken: formData.quantityTaken ? parseFloat(formData.quantityTaken) : undefined,
-        reason: formData.reason || undefined,
         done_by: formData.doneBy || user?.name || user?.email || "Unknown",
         remarks: formData.remarks || undefined,
         checked_by: user?.name || user?.email || "Unknown",
       };
+      const editingChemicalLog = editingLogId ? logs.find((l) => l.id === editingLogId) : null;
+      const canChangeTimestamp =
+        editingChemicalLog &&
+        (editingChemicalLog.status === "rejected" || editingChemicalLog.status === "pending_secondary_approval");
+      if (canChangeTimestamp && formData.date && formData.time) {
+        prepData.timestamp = new Date(`${formData.date}T${formData.time}`).toISOString();
+      }
 
-      if (editingLogId) {
-        await chemicalPrepAPI.update(editingLogId, prepData);
-        toast.success("Chemical entry updated successfully.");
+      if (editingLogId && editingChemicalLog) {
+        const isCorrection =
+          (editingChemicalLog.status === "rejected" || editingChemicalLog.status === "pending_secondary_approval") &&
+          user?.role !== "operator";
+        if (isCorrection) {
+          await chemicalPrepAPI.correct(editingLogId, prepData as any);
+          toast.success("Chemical entry corrected as new entry.");
+        } else {
+          await chemicalPrepAPI.update(editingLogId, prepData as any);
+          toast.success("Chemical entry updated successfully.");
+        }
         setEditingLogId(null);
         setFormData({
           equipmentName: "",
           chemicalName: "",
           chemicalCategory: "major",
+          chemicalConcentration: "",
           solutionConcentration: "",
           waterQty: "",
           chemicalQty: "",
           batchNo: "",
-          quantityTaken: "",
-          reason: "",
           doneBy: "",
           remarks: "",
+          date: "",
+          time: "",
         });
         setIsDialogOpen(false);
         await refreshLogs();
       } else {
-        await chemicalPrepAPI.create(prepData);
+        await chemicalPrepAPI.create(prepData as any);
         toast.success("Chemical preparation entry saved successfully");
 
         setFormData({
           equipmentName: "",
           chemicalName: "",
           chemicalCategory: "major",
+          chemicalConcentration: "",
           solutionConcentration: "",
           waterQty: "",
           chemicalQty: "",
           batchNo: "",
-          quantityTaken: "",
-          reason: "",
           doneBy: "",
           remarks: "",
+          date: "",
+          time: "",
         });
         setIsDialogOpen(false);
         await refreshLogs();
@@ -392,15 +422,21 @@ const ChemicalLogBookPage: React.FC = () => {
     setFormData({
       equipmentName: log.equipmentName ?? "",
       chemicalName: log.chemicalName ?? "",
-      chemicalCategory: "major",
+      chemicalCategory: (log.chemicalCategory as "major" | "minor") || "major",
+      chemicalConcentration:
+        log.chemicalConcentration != null
+          ? String(log.chemicalConcentration)
+          : log.chemicalPercent != null
+          ? String(log.chemicalPercent)
+          : "",
       solutionConcentration: log.solutionConcentration != null ? String(log.solutionConcentration) : "",
       waterQty: log.waterQty != null ? String(log.waterQty) : "",
       chemicalQty: log.chemicalQty != null ? String(log.chemicalQty) : "",
       batchNo: log.batchNo ?? "",
-      quantityTaken: log.quantityTaken != null ? String(log.quantityTaken) : "",
-      reason: log.reason ?? "",
       doneBy: log.doneBy ?? "",
       remarks: log.remarks ?? "",
+      date: log.date ?? "",
+      time: log.time ?? "",
     });
     setIsDialogOpen(true);
   };
@@ -414,19 +450,20 @@ const ChemicalLogBookPage: React.FC = () => {
       await refreshLogs();
     } catch (error: any) {
       console.error("Error approving chemical entry:", error);
-      toast.error(error?.message || "Failed to approve chemical entry");
+      toast.error(error?.response?.data?.error || error?.message || "Failed to approve chemical entry");
     }
   };
 
-  const handleReject = async (id: string) => {
-    setRejectConfirmOpen(false);
+  const handleReject = async (id: string, remarks: string) => {
+    setRejectCommentOpen(false);
+    setRejectComment("");
     try {
-      await chemicalPrepAPI.approve(id, "reject");
+      await chemicalPrepAPI.approve(id, "reject", remarks);
       toast.error("Chemical entry rejected");
       await refreshLogs();
     } catch (error: any) {
       console.error("Error rejecting chemical entry:", error);
-      toast.error(error?.message || "Failed to reject chemical entry");
+      toast.error(error?.response?.data?.remarks?.[0] || error?.message || "Failed to reject chemical entry");
     }
   };
 
@@ -457,11 +494,17 @@ const ChemicalLogBookPage: React.FC = () => {
               Record and review chemical preparation details.
             </p>
             <div className="mt-2 flex items-center gap-2">
+              <Badge variant="secondary">
+                {logs.filter((log) => log.status === "draft").length} Draft
+              </Badge>
               <Badge variant="pending">
-                {logs.filter((log) => log.status === "pending" || log.status === "draft").length} Pending
+                {logs.filter((log) => log.status === "pending" || log.status === "pending_secondary_approval").length} Pending
               </Badge>
               <Badge variant="success">
                 {logs.filter((log) => log.status === "approved").length} Approved
+              </Badge>
+              <Badge variant="destructive">
+                {logs.filter((log) => log.status === "rejected").length} Rejected
               </Badge>
             </div>
           </div>
@@ -526,6 +569,7 @@ const ChemicalLogBookPage: React.FC = () => {
                         <SelectItem value="pending">Pending</SelectItem>
                         <SelectItem value="approved">Approved</SelectItem>
                         <SelectItem value="rejected">Rejected</SelectItem>
+                        <SelectItem value="pending_secondary_approval">Pending secondary approval</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -626,19 +670,59 @@ const ChemicalLogBookPage: React.FC = () => {
                   </div>
 
                   {/* Equipment & Chemical */}
-                  <div className="space-y-2">
-                    <Label>Equipment Name *</Label>
-                    <Input
-                      type="text"
-                      value={formData.equipmentName}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          equipmentName: e.target.value,
-                        })
-                      }
-                      placeholder="e.g., EN0001-MGF"
-                    />
+                  {/* Date and Time (editable when correcting rejected or pending-secondary-approval entry) */}
+                  {editingLogId && (() => {
+                    const editingLog = logs.find((l) => l.id === editingLogId);
+                    const canEditDateTime = editingLog && (editingLog.status === "rejected" || editingLog.status === "pending_secondary_approval");
+                    return (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Date</Label>
+                          <Input type="date" value={formData.date} onChange={(e) => setFormData({ ...formData, date: e.target.value })} disabled={!canEditDateTime} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Time</Label>
+                          <Input type="time" step={1} value={formData.time} onChange={(e) => setFormData({ ...formData, time: e.target.value })} disabled={!canEditDateTime} />
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Equipment Name *</Label>
+                      <Input
+                        type="text"
+                        value={formData.equipmentName}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            equipmentName: e.target.value,
+                          })
+                        }
+                        placeholder="e.g., EN0001-MGF"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Chemical Category</Label>
+                      <Select
+                        value={formData.chemicalCategory}
+                        onValueChange={(v) =>
+                          setFormData({
+                            ...formData,
+                            chemicalCategory: v as "major" | "minor",
+                          })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select category" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="major">Major</SelectItem>
+                          <SelectItem value="minor">Minor</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
 
                   <div className="space-y-2">
@@ -681,116 +765,87 @@ const ChemicalLogBookPage: React.FC = () => {
                   <div className="space-y-3 pt-2 border-t mt-2">
                     <h3 className="text-sm font-semibold">Quantity Details</h3>
                     <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Chemical Category</Label>
-                      <Select
-                        value={formData.chemicalCategory}
-                        onValueChange={(v) =>
-                          setFormData({
-                            ...formData,
-                            chemicalCategory: v as "major" | "minor",
-                          })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select category" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="major">Major</SelectItem>
-                          <SelectItem value="minor">Minor</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>
-                        Solution Concentration (%)
+                      {/* Row 1: Solution Concentration & Chemical Concentration */}
+                      <div className="space-y-2">
                         {formData.chemicalCategory === "major" && (
-                          <span className="text-destructive ml-1">*</span>
+                          <>
+                            <Label>
+                              Solution Concentration (%)
+                              <span className="text-destructive ml-1">*</span>
+                            </Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={formData.solutionConcentration}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  solutionConcentration: e.target.value,
+                                })
+                              }
+                              placeholder="e.g., 1.0"
+                            />
+                          </>
                         )}
-                      </Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={formData.solutionConcentration}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            solutionConcentration: e.target.value,
-                          })
-                        }
-                        placeholder="e.g., 1.0"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>
-                        Water Quantity (L)
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Chemical Concentration (%)</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={formData.chemicalConcentration}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              chemicalConcentration: e.target.value,
+                            })
+                          }
+                          placeholder="e.g., 5.0"
+                        />
+                      </div>
+
+                      {/* Row 2: Water Quantity & Chemical Quantity */}
+                      <div className="space-y-2">
                         {formData.chemicalCategory === "major" && (
-                          <span className="text-destructive ml-1">*</span>
+                          <>
+                            <Label>
+                              Water Quantity (L)
+                              <span className="text-destructive ml-1">*</span>
+                            </Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={formData.waterQty}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  waterQty: e.target.value,
+                                })
+                              }
+                              placeholder="e.g., 100"
+                            />
+                          </>
                         )}
-                      </Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={formData.waterQty}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            waterQty: e.target.value,
-                          })
-                        }
-                        placeholder="e.g., 100"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Chemical Quantity (Kg)</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={formData.chemicalQty}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            chemicalQty: e.target.value,
-                          })
-                        }
-                        placeholder="e.g., 0.32"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Quantity Taken (Liters/KGs)</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={formData.quantityTaken}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            quantityTaken: e.target.value,
-                          })
-                        }
-                        placeholder="e.g., 10"
-                      />
-                    </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Chemical Quantity (Kg)</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={formData.chemicalQty}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              chemicalQty: e.target.value,
+                            })
+                          }
+                          placeholder="e.g., 0.32"
+                        />
+                      </div>
                     </div>
                   </div>
 
-                  {/* Process Details */}
                   <div className="space-y-3 pt-2 border-t mt-2">
-                    <h3 className="text-sm font-semibold">Process Details</h3>
-                    <div className="space-y-2">
-                      <Label>Reason</Label>
-                      <Input
-                        type="text"
-                        value={formData.reason}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            reason: e.target.value,
-                          })
-                        }
-                        placeholder="e.g., Routine dosing"
-                      />
-                    </div>
                     <div className="space-y-2">
                       <Label>Done By</Label>
                       <Input
@@ -877,7 +932,6 @@ const ChemicalLogBookPage: React.FC = () => {
                   <th className="px-3 py-2 text-left font-semibold">Chemical</th>
                   <th className="px-3 py-2 text-left font-semibold min-w-[130px]">Readings</th>
                   <th className="px-3 py-2 text-left font-semibold whitespace-nowrap">Batch No</th>
-                  <th className="px-3 py-2 text-center font-semibold w-64">Reason</th>
                   <th className="px-3 py-2 text-left font-semibold">Remarks</th>
                   <th className="px-3 py-2 text-left font-semibold">Comment</th>
                   <th className="px-3 py-2 text-left font-semibold">Checked By</th>
@@ -899,7 +953,7 @@ const ChemicalLogBookPage: React.FC = () => {
                 {filteredLogs.map((log) => (
                   <tr key={log.id} className="border-t">
                     <td className="px-3 py-2 align-middle">
-                      {(log.status === "pending" || log.status === "draft") && user?.role !== "operator" ? (
+                      {(log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval") && user?.role !== "operator" ? (
                         <Checkbox
                           checked={selectedLogIds.includes(log.id)}
                           onCheckedChange={() => handleToggleLogSelection(log.id)}
@@ -929,20 +983,9 @@ const ChemicalLogBookPage: React.FC = () => {
                           <span className="font-semibold">Chemical:</span>{" "}
                           {log.chemicalQty} Kg
                         </div>
-                        {log.quantityTaken !== undefined && (
-                          <div>
-                            <span className="font-semibold">Quantity Taken:</span>{" "}
-                            {log.quantityTaken} L/Kg
-                          </div>
-                        )}
                       </div>
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">{log.batchNo || "-"}</td>
-                    <td className="px-3 py-2 max-w-md text-center align-middle">
-                      <p className="line-clamp-2 text-muted-foreground inline-block text-left">
-                        {log.reason || "-"}
-                      </p>
-                    </td>
                     <td className="px-3 py-2 max-w-xs">
                       <p className="line-clamp-3 text-muted-foreground">{log.remarks || "-"}</p>
                     </td>
@@ -973,17 +1016,27 @@ const ChemicalLogBookPage: React.FC = () => {
                     </td>
                     <td className="px-3 py-2">{log.checkedBy}</td>
                     <td className="px-3 py-2">
-                      <Badge
-                        variant={
-                          log.status === "approved"
-                            ? "success"
-                            : log.status === "rejected"
-                            ? "destructive"
-                            : "secondary"
-                        }
-                      >
-                        {log.status}
-                      </Badge>
+                      <div className="flex flex-col gap-1">
+                        <Badge
+                          variant={
+                            log.status === "approved"
+                              ? "success"
+                              : log.status === "rejected"
+                              ? "destructive"
+                              : log.status === "pending_secondary_approval"
+                              ? "secondary"
+                              : "secondary"
+                          }
+                        >
+                          {log.status === "pending_secondary_approval" ? "Pending" : log.status}
+                        </Badge>
+                        {log.corrects_id && (
+                          <span className="text-[11px] text-muted-foreground">Correction entry</span>
+                        )}
+                        {log.has_corrections && !log.corrects_id && (
+                          <span className="text-[11px] text-muted-foreground">Has corrections</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
@@ -994,18 +1047,36 @@ const ChemicalLogBookPage: React.FC = () => {
                               size="icon"
                               className={cn(
                                 "h-7 w-7",
-                                log.status === "pending" || log.status === "draft"
+                                (log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval") &&
+                                  !(log.status === "pending_secondary_approval" && log.approved_by_id === user?.id)
                                   ? "text-green-600 hover:text-green-700 hover:bg-green-500/10"
                                   : "opacity-40 cursor-not-allowed"
                               )}
-                              title={log.status === "pending" || log.status === "draft" ? "Approve" : "Approved"}
+                              title={
+                                log.status === "pending_secondary_approval" && log.approved_by_id === user?.id
+                                  ? "A different person must approve this corrected entry."
+                                  : (log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval"
+                                      ? "Approve"
+                                      : "Approved")
+                              }
                               onClick={() => {
-                                if (log.status === "pending" || log.status === "draft") {
+                                if (log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval") {
+                                  if (log.status === "pending_secondary_approval" && log.approved_by_id === user?.id) {
+                                    toast.error("A different person must approve this corrected entry.");
+                                    return;
+                                  }
+                                  if (log.operator_id === user?.id) {
+                                    toast.error("The log book entry must be approved by a different user than the operator (Log Book Done By).");
+                                    return;
+                                  }
                                   setSelectedLogIds([log.id]);
                                   setApproveConfirmOpen(true);
                                 }
                               }}
-                              disabled={log.status !== "pending" && log.status !== "draft"}
+                              disabled={
+                                (log.status !== "pending" && log.status !== "draft" && log.status !== "pending_secondary_approval") ||
+                                (log.status === "pending_secondary_approval" && log.approved_by_id === user?.id)
+                              }
                             >
                               <CheckCircle className="w-4 h-4" />
                             </Button>
@@ -1014,29 +1085,50 @@ const ChemicalLogBookPage: React.FC = () => {
                               size="icon"
                               className={cn(
                                 "h-7 w-7",
-                                log.status === "pending" || log.status === "draft"
+                                (log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval")
                                   ? "text-destructive hover:text-destructive hover:bg-destructive/10"
                                   : "opacity-40 cursor-not-allowed"
                               )}
-                              title={log.status === "pending" || log.status === "draft" ? "Reject" : "Rejected"}
+                              title={log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval" ? "Reject" : "Rejected"}
                               onClick={() => {
-                                if (log.status === "pending" || log.status === "draft") {
+                                if (log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval") {
                                   setSelectedLogId(log.id);
                                   setRejectConfirmOpen(true);
                                 }
                               }}
-                              disabled={log.status !== "pending" && log.status !== "draft"}
+                              disabled={log.status !== "pending" && log.status !== "draft" && log.status !== "pending_secondary_approval"}
                             >
                               <XCircle className="w-4 h-4" />
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-7 w-7"
-                              title="Edit entry"
-                              onClick={() => handleEditLog(log)}
+                              className={cn(
+                                "h-7 w-7",
+                                (log.status === "rejected" || log.status === "pending_secondary_approval")
+                                  ? ""
+                                  : "opacity-40 cursor-not-allowed"
+                              )}
+                              title={log.status === "rejected" || log.status === "pending_secondary_approval" ? "Edit entry" : "Edit only available after reject"}
+                              onClick={() => {
+                                if (log.status === "rejected" || log.status === "pending_secondary_approval") handleEditLog(log);
+                              }}
+                              disabled={log.status !== "rejected" && log.status !== "pending_secondary_approval"}
                             >
                               <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title="View history (old/new values)"
+                              asChild
+                            >
+                              <Link
+                                to={`/reports?tab=audit-trail&object_type=chemical_log&object_id=${log.id}`}
+                              >
+                                <History className="w-4 h-4" />
+                              </Link>
                             </Button>
                           </>
                         )}
@@ -1151,7 +1243,7 @@ const ChemicalLogBookPage: React.FC = () => {
                     toast.success(`${ids.length} chemical entries approved successfully.`);
                   } catch (error: any) {
                     console.error("Error approving chemical entries:", error);
-                    toast.error(error?.message || "Failed to approve some entries");
+                    toast.error(error?.response?.data?.error || error?.message || "Failed to approve some entries");
                   }
                 }}
               >
@@ -1162,7 +1254,7 @@ const ChemicalLogBookPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Reject Confirmation */}
+      {/* Reject: Step 1 – Confirm */}
       <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1174,7 +1266,10 @@ const ChemicalLogBookPage: React.FC = () => {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => selectedLogId && handleReject(selectedLogId)}
+              onClick={() => {
+                setRejectConfirmOpen(false);
+                setRejectCommentOpen(true);
+              }}
               className="bg-destructive hover:bg-destructive/90 text-white"
             >
               Reject
@@ -1182,6 +1277,68 @@ const ChemicalLogBookPage: React.FC = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Reject: Step 2 – Mandatory comment */}
+      <Dialog
+        open={rejectCommentOpen}
+        onOpenChange={(open) => {
+          setRejectCommentOpen(open);
+          if (!open) {
+            setRejectComment("");
+            setSelectedLogId(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Rejection Comment (Required)</DialogTitle>
+            <DialogDescription>
+              Please enter a comment for this rejection.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="reject-comment">Comment <span className="text-destructive">*</span></Label>
+              <Textarea
+                id="reject-comment"
+                value={rejectComment}
+                onChange={(e) => setRejectComment(e.target.value)}
+                placeholder="Enter rejection comment..."
+                rows={3}
+                className="resize-none"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setRejectCommentOpen(false);
+                  setRejectComment("");
+                  setSelectedLogId(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-destructive hover:bg-destructive/90 text-white"
+                onClick={() => {
+                  const comment = rejectComment.trim();
+                  if (!comment) {
+                    toast.error("Comment is required for rejection");
+                    return;
+                  }
+                  if (selectedLogId) {
+                    handleReject(selectedLogId, comment);
+                    setSelectedLogId(null);
+                  }
+                }}
+              >
+                Reject
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

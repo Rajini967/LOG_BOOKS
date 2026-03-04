@@ -25,7 +25,8 @@ import { format } from "date-fns";
 import { toast } from "sonner";
 import { boilerLogAPI } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { Clock, Thermometer, Gauge, Save, Filter, X, Plus, Trash2, CheckCircle, XCircle, Edit } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Clock, Thermometer, Gauge, Save, Filter, X, Plus, Trash2, CheckCircle, XCircle, Edit, History } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
@@ -82,7 +83,12 @@ interface BoilerLog {
   comment?: string;
   checkedBy: string;
   timestamp: Date;
-  status: "pending" | "approved" | "rejected" | "draft";
+  status: "pending" | "approved" | "rejected" | "draft" | "pending_secondary_approval";
+  /** User who approved or rejected (rejector for rejected / pending_secondary_approval entries) */
+  operator_id?: string;
+  approved_by_id?: string;
+  corrects_id?: string;
+  has_corrections?: boolean;
 }
 
 const BoilerLogBookPage: React.FC = () => {
@@ -95,6 +101,8 @@ const BoilerLogBookPage: React.FC = () => {
   const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
   const [approveCommentOpen, setApproveCommentOpen] = useState(false);
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
+  const [rejectCommentOpen, setRejectCommentOpen] = useState(false);
+  const [rejectComment, setRejectComment] = useState("");
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [approvalComment, setApprovalComment] = useState("");
@@ -123,6 +131,8 @@ const BoilerLogBookPage: React.FC = () => {
     mobreyFunctioning: "",
     manualBlowdownTime: "",
     remarks: "",
+    date: "",
+    time: "",
   });
 
   const isFormValueOutOfLimit = (field: BoilerLimitField, rawValue: string): boolean => {
@@ -169,7 +179,7 @@ const BoilerLogBookPage: React.FC = () => {
   const [filters, setFilters] = useState({
     fromDate: "",
     toDate: "",
-    status: "all" as "all" | "pending" | "approved" | "rejected",
+    status: "all" as "all" | "pending" | "approved" | "rejected" | "pending_secondary_approval",
     equipmentId: "",
     checkedBy: "",
     fromTime: "",
@@ -215,6 +225,10 @@ const BoilerLogBookPage: React.FC = () => {
           checkedBy: log.operator_name,
           timestamp,
           status: log.status as BoilerLog["status"],
+          operator_id: log.operator_id,
+          approved_by_id: log.approved_by_id,
+          corrects_id: log.corrects_id,
+          has_corrections: log.has_corrections,
         });
       });
 
@@ -303,7 +317,7 @@ const BoilerLogBookPage: React.FC = () => {
   }, [filters]);
 
   const pendingDraftLogs = useMemo(
-    () => filteredLogs.filter((log) => log.status === "pending" || log.status === "draft"),
+    () => filteredLogs.filter((log) => log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval"),
     [filteredLogs],
   );
   const pendingDraftIds = useMemo(() => pendingDraftLogs.map((log) => log.id), [pendingDraftLogs]);
@@ -374,10 +388,24 @@ const BoilerLogBookPage: React.FC = () => {
         manual_blowdown_time: formData.manualBlowdownTime || undefined,
         remarks: formData.remarks || undefined,
       };
-
-      if (editingLogId) {
-        await boilerLogAPI.update(editingLogId, logData as any);
-        toast.success("Boiler entry updated successfully.");
+      const editingBoilerLog = editingLogId ? logs.find((l) => l.id === editingLogId) : null;
+      const canChangeTimestamp =
+        editingBoilerLog &&
+        (editingBoilerLog.status === "rejected" || editingBoilerLog.status === "pending_secondary_approval");
+      if (canChangeTimestamp && formData.date && formData.time) {
+        (logData as Record<string, unknown>).timestamp = new Date(`${formData.date}T${formData.time}`).toISOString();
+      }
+      if (editingLogId && editingBoilerLog) {
+        const isCorrection =
+          (editingBoilerLog.status === "rejected" || editingBoilerLog.status === "pending_secondary_approval") &&
+          user?.role !== "operator";
+        if (isCorrection) {
+          await boilerLogAPI.correct(editingLogId, logData as any);
+          toast.success("Boiler entry corrected as new entry.");
+        } else {
+          await boilerLogAPI.update(editingLogId, logData as any);
+          toast.success("Boiler entry updated successfully.");
+        }
         setEditingLogId(null);
         setFormData({
           equipmentId: "",
@@ -400,6 +428,8 @@ const BoilerLogBookPage: React.FC = () => {
           mobreyFunctioning: "",
           manualBlowdownTime: "",
           remarks: "",
+          date: "",
+          time: "",
         });
         setIsDialogOpen(false);
         await refreshLogs();
@@ -428,6 +458,8 @@ const BoilerLogBookPage: React.FC = () => {
           mobreyFunctioning: "",
           manualBlowdownTime: "",
           remarks: "",
+          date: "",
+          time: "",
         });
         setIsDialogOpen(false);
         await refreshLogs();
@@ -475,6 +507,8 @@ const BoilerLogBookPage: React.FC = () => {
       mobreyFunctioning: log.mobreyFunctioning ?? "",
       manualBlowdownTime: log.manualBlowdownTime ?? "",
       remarks: log.remarks ?? "",
+      date: log.date ?? "",
+      time: log.time ?? "",
     });
     setIsDialogOpen(true);
   };
@@ -488,19 +522,20 @@ const BoilerLogBookPage: React.FC = () => {
       await refreshLogs();
     } catch (error: any) {
       console.error("Error approving boiler entry:", error);
-      toast.error(error?.message || "Failed to approve boiler entry");
+      toast.error(error?.response?.data?.error || error?.message || "Failed to approve boiler entry");
     }
   };
 
-  const handleReject = async (id: string) => {
-    setRejectConfirmOpen(false);
+  const handleReject = async (id: string, remarks: string) => {
+    setRejectCommentOpen(false);
+    setRejectComment("");
     try {
-      await boilerLogAPI.approve(id, "reject");
+      await boilerLogAPI.approve(id, "reject", remarks);
       toast.error("Boiler entry rejected");
       await refreshLogs();
     } catch (error: any) {
       console.error("Error rejecting boiler entry:", error);
-      toast.error(error?.message || "Failed to reject boiler entry");
+      toast.error(error?.response?.data?.remarks?.[0] || error?.message || "Failed to reject boiler entry");
     }
   };
 
@@ -531,11 +566,17 @@ const BoilerLogBookPage: React.FC = () => {
               Record and review boiler operating parameters.
             </p>
             <div className="mt-2 flex items-center gap-2">
+              <Badge variant="secondary">
+                {logs.filter((log) => log.status === "draft").length} Draft
+              </Badge>
               <Badge variant="pending">
-                {logs.filter((log) => log.status === "pending" || log.status === "draft").length} Pending
+                {logs.filter((log) => log.status === "pending" || log.status === "pending_secondary_approval").length} Pending
               </Badge>
               <Badge variant="success">
                 {logs.filter((log) => log.status === "approved").length} Approved
+              </Badge>
+              <Badge variant="destructive">
+                {logs.filter((log) => log.status === "rejected").length} Rejected
               </Badge>
             </div>
           </div>
@@ -600,6 +641,7 @@ const BoilerLogBookPage: React.FC = () => {
                         <SelectItem value="pending">Pending</SelectItem>
                         <SelectItem value="approved">Approved</SelectItem>
                         <SelectItem value="rejected">Rejected</SelectItem>
+                        <SelectItem value="pending_secondary_approval">Pending secondary approval</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -716,6 +758,24 @@ const BoilerLogBookPage: React.FC = () => {
                       />
                     </div>
                   </div>
+
+                  {/* Date and Time (editable when correcting rejected or pending-secondary-approval entry) */}
+                  {editingLogId && (() => {
+                    const editingLog = logs.find((l) => l.id === editingLogId);
+                    const canEditDateTime = editingLog && (editingLog.status === "rejected" || editingLog.status === "pending_secondary_approval");
+                    return (
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Date</Label>
+                          <Input type="date" value={formData.date} onChange={(e) => setFormData({ ...formData, date: e.target.value })} disabled={!canEditDateTime} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Time</Label>
+                          <Input type="time" step={1} value={formData.time} onChange={(e) => setFormData({ ...formData, time: e.target.value })} disabled={!canEditDateTime} />
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   {/* Hourly Parameters */}
                   <div className="space-y-3">
@@ -996,7 +1056,7 @@ const BoilerLogBookPage: React.FC = () => {
                 {filteredLogs.map((log) => (
                   <tr key={log.id} className="border-t">
                     <td className="px-3 py-2 align-middle">
-                      {(log.status === "pending" || log.status === "draft") && user?.role !== "operator" ? (
+                      {(log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval") && user?.role !== "operator" ? (
                         <Checkbox
                           checked={selectedLogIds.includes(log.id)}
                           onCheckedChange={() => handleToggleLogSelection(log.id)}
@@ -1087,17 +1147,27 @@ const BoilerLogBookPage: React.FC = () => {
                     </td>
                     <td className="px-3 py-2">{log.checkedBy}</td>
                     <td className="px-3 py-2">
-                      <Badge
-                        variant={
-                          log.status === "approved"
-                            ? "success"
-                            : log.status === "rejected"
-                            ? "destructive"
-                            : "secondary"
-                        }
-                      >
-                        {log.status}
-                      </Badge>
+                      <div className="flex flex-col gap-1">
+                        <Badge
+                          variant={
+                            log.status === "approved"
+                              ? "success"
+                              : log.status === "rejected"
+                              ? "destructive"
+                              : log.status === "pending_secondary_approval"
+                              ? "secondary"
+                              : "secondary"
+                          }
+                        >
+                          {log.status === "pending_secondary_approval" ? "Pending" : log.status}
+                        </Badge>
+                        {log.corrects_id && (
+                          <span className="text-[11px] text-muted-foreground">Correction entry</span>
+                        )}
+                        {log.has_corrections && !log.corrects_id && (
+                          <span className="text-[11px] text-muted-foreground">Has corrections</span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
@@ -1108,18 +1178,36 @@ const BoilerLogBookPage: React.FC = () => {
                               size="icon"
                               className={cn(
                                 "h-7 w-7",
-                                log.status === "pending" || log.status === "draft"
+                                (log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval") &&
+                                  !(log.status === "pending_secondary_approval" && log.approved_by_id === user?.id)
                                   ? "text-green-600 hover:text-green-700 hover:bg-green-500/10"
                                   : "opacity-40 cursor-not-allowed"
                               )}
-                              title={log.status === "pending" || log.status === "draft" ? "Approve" : "Approved"}
+                              title={
+                                log.status === "pending_secondary_approval" && log.approved_by_id === user?.id
+                                  ? "A different person must approve this corrected entry."
+                                  : (log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval"
+                                      ? "Approve"
+                                      : "Approved")
+                              }
                               onClick={() => {
-                                if (log.status === "pending" || log.status === "draft") {
+                                if (log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval") {
+                                  if (log.status === "pending_secondary_approval" && log.approved_by_id === user?.id) {
+                                    toast.error("A different person must approve this corrected entry.");
+                                    return;
+                                  }
+                                  if (log.operator_id === user?.id) {
+                                    toast.error("The log book entry must be approved by a different user than the operator (Log Book Done By).");
+                                    return;
+                                  }
                                   setSelectedLogIds([log.id]);
                                   setApproveConfirmOpen(true);
                                 }
                               }}
-                              disabled={log.status !== "pending" && log.status !== "draft"}
+                              disabled={
+                                (log.status !== "pending" && log.status !== "draft" && log.status !== "pending_secondary_approval") ||
+                                (log.status === "pending_secondary_approval" && log.approved_by_id === user?.id)
+                              }
                             >
                               <CheckCircle className="w-4 h-4" />
                             </Button>
@@ -1128,29 +1216,50 @@ const BoilerLogBookPage: React.FC = () => {
                               size="icon"
                               className={cn(
                                 "h-7 w-7",
-                                log.status === "pending" || log.status === "draft"
+                                (log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval")
                                   ? "text-destructive hover:text-destructive hover:bg-destructive/10"
                                   : "opacity-40 cursor-not-allowed"
                               )}
-                              title={log.status === "pending" || log.status === "draft" ? "Reject" : "Rejected"}
+                              title={log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval" ? "Reject" : "Rejected"}
                               onClick={() => {
-                                if (log.status === "pending" || log.status === "draft") {
+                                if (log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval") {
                                   setSelectedLogId(log.id);
                                   setRejectConfirmOpen(true);
                                 }
                               }}
-                              disabled={log.status !== "pending" && log.status !== "draft"}
+                              disabled={log.status !== "pending" && log.status !== "draft" && log.status !== "pending_secondary_approval"}
                             >
                               <XCircle className="w-4 h-4" />
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-7 w-7"
-                              title="Edit entry"
-                              onClick={() => handleEditLog(log)}
+                              className={cn(
+                                "h-7 w-7",
+                                (log.status === "rejected" || log.status === "pending_secondary_approval")
+                                  ? ""
+                                  : "opacity-40 cursor-not-allowed"
+                              )}
+                              title={log.status === "rejected" || log.status === "pending_secondary_approval" ? "Edit entry" : "Edit only available after reject"}
+                              onClick={() => {
+                                if (log.status === "rejected" || log.status === "pending_secondary_approval") handleEditLog(log);
+                              }}
+                              disabled={log.status !== "rejected" && log.status !== "pending_secondary_approval"}
                             >
                               <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title="View history (old/new values)"
+                              asChild
+                            >
+                              <Link
+                                to={`/reports?tab=audit-trail&object_type=boiler_log&object_id=${log.id}`}
+                              >
+                                <History className="w-4 h-4" />
+                              </Link>
                             </Button>
                           </>
                         )}
@@ -1265,7 +1374,7 @@ const BoilerLogBookPage: React.FC = () => {
                     toast.success(`${ids.length} boiler entries approved successfully.`);
                   } catch (error: any) {
                     console.error("Error approving boiler entries:", error);
-                    toast.error(error?.message || "Failed to approve some entries");
+                    toast.error(error?.response?.data?.error || error?.message || "Failed to approve some entries");
                   }
                 }}
               >
@@ -1276,7 +1385,7 @@ const BoilerLogBookPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Reject Confirmation */}
+      {/* Reject: Step 1 – Confirm */}
       <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1288,7 +1397,10 @@ const BoilerLogBookPage: React.FC = () => {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => selectedLogId && handleReject(selectedLogId)}
+              onClick={() => {
+                setRejectConfirmOpen(false);
+                setRejectCommentOpen(true);
+              }}
               className="bg-destructive hover:bg-destructive/90 text-white"
             >
               Reject
@@ -1296,6 +1408,68 @@ const BoilerLogBookPage: React.FC = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Reject: Step 2 – Mandatory comment */}
+      <Dialog
+        open={rejectCommentOpen}
+        onOpenChange={(open) => {
+          setRejectCommentOpen(open);
+          if (!open) {
+            setRejectComment("");
+            setSelectedLogId(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Rejection Comment (Required)</DialogTitle>
+            <DialogDescription>
+              Please enter a comment for this rejection.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="reject-comment">Comment <span className="text-destructive">*</span></Label>
+              <Textarea
+                id="reject-comment"
+                value={rejectComment}
+                onChange={(e) => setRejectComment(e.target.value)}
+                placeholder="Enter rejection comment..."
+                rows={3}
+                className="resize-none"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setRejectCommentOpen(false);
+                  setRejectComment("");
+                  setSelectedLogId(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-destructive hover:bg-destructive/90 text-white"
+                onClick={() => {
+                  const comment = rejectComment.trim();
+                  if (!comment) {
+                    toast.error("Comment is required for rejection");
+                    return;
+                  }
+                  if (selectedLogId) {
+                    handleReject(selectedLogId, comment);
+                    setSelectedLogId(null);
+                  }
+                }}
+              >
+                Reject
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 };

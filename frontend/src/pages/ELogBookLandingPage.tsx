@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
-import { Thermometer, Gauge, Droplets } from 'lucide-react';
+import { Thermometer, Gauge, Droplets, Filter as FilterIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface EquipmentModule {
@@ -37,6 +37,14 @@ const equipmentModules: EquipmentModule[] = [
     path: '/e-log-book/chemical',
     icon: Droplets,
     color: 'bg-green-500',
+  },
+  {
+    id: 'filter',
+    name: 'Filter',
+    description: 'Log filter integrity, cleaning, and replacement details',
+    path: '/e-log-book/filter',
+    icon: FilterIcon,
+    color: 'bg-teal-500',
   },
 ];
 

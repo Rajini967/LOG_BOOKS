@@ -209,6 +209,7 @@ export default function ReportsPage() {
   const [auditToDate, setAuditToDate] = useState<string>('');
   const [auditEventType, setAuditEventType] = useState<string>('all');
   const [auditObjectType, setAuditObjectType] = useState<string>('all');
+  const [auditObjectId, setAuditObjectId] = useState<string>('');
 
   const isSupervisor = user?.role === 'supervisor' || user?.role === 'super_admin';
   const isManager = user?.role === 'manager';
@@ -349,6 +350,19 @@ export default function ReportsPage() {
     [],
   );
 
+  // Read URL params on mount (e.g. from "View history" link on log pages)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    const object_type = params.get('object_type');
+    const object_id = params.get('object_id');
+    if (tab === 'audit-trail') {
+      setActiveTab('audit-trail');
+      if (object_type) setAuditObjectType(object_type);
+      if (object_id) setAuditObjectId(object_id);
+    }
+  }, []);
+
   // Lazy-load data when switching tabs
   useEffect(() => {
     if (activeTab === 'user-management' && canSeeUserReports && userReports.length === 0) {
@@ -356,7 +370,13 @@ export default function ReportsPage() {
     } else if (activeTab === 'user-activity' && canSeeActivity && activityRows.length === 0) {
       loadUserActivity();
     } else if (activeTab === 'audit-trail' && canSeeAudit && auditRows.length === 0) {
-      loadAuditEvents();
+      const params: Record<string, string> = {};
+      if (auditFromDate) params.from_date = auditFromDate;
+      if (auditToDate) params.to_date = auditToDate;
+      if (auditEventType !== 'all') params.event_type = auditEventType;
+      if (auditObjectType !== 'all' && auditObjectType.trim()) params.object_type = auditObjectType.trim();
+      if (auditObjectId.trim()) params.object_id = auditObjectId.trim();
+      loadAuditEvents(params);
     }
   }, [
     activeTab,
@@ -366,6 +386,11 @@ export default function ReportsPage() {
     userReports.length,
     activityRows.length,
     auditRows.length,
+    auditFromDate,
+    auditToDate,
+    auditEventType,
+    auditObjectType,
+    auditObjectId,
     loadUserReports,
     loadUserActivity,
     loadAuditEvents,
@@ -2198,7 +2223,16 @@ export default function ReportsPage() {
                   onChange={(e) =>
                     setAuditObjectType(e.target.value ? e.target.value : 'all')
                   }
-                  placeholder="e.g. chiller_limit"
+                  placeholder="e.g. chiller_log"
+                  className="mt-1 w-[180px]"
+                />
+              </div>
+              <div>
+                <Label>Object ID</Label>
+                <Input
+                  value={auditObjectId}
+                  onChange={(e) => setAuditObjectId(e.target.value)}
+                  placeholder="e.g. log entry ID"
                   className="mt-1 w-[180px]"
                 />
               </div>
@@ -2213,6 +2247,7 @@ export default function ReportsPage() {
                   if (auditObjectType !== 'all' && auditObjectType.trim()) {
                     params.object_type = auditObjectType.trim();
                   }
+                  if (auditObjectId.trim()) params.object_id = auditObjectId.trim();
                   loadAuditEvents(params);
                 }}
               >

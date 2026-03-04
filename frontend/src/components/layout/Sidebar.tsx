@@ -93,6 +93,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     { path: '/e-log-book/chiller', icon: Thermometer, label: 'Chiller', roles: ['operator', 'supervisor', 'super_admin', 'manager'] },
     { path: '/e-log-book/boiler', icon: Gauge, label: 'Boiler', roles: ['operator', 'supervisor', 'super_admin', 'manager'] },
     { path: '/e-log-book/chemical', icon: Droplets, label: 'Chemical', roles: ['operator', 'supervisor', 'super_admin', 'manager'] },
+    { path: '/e-log-book/filter', icon: Filter, label: 'Filter Log Book', roles: ['operator', 'supervisor', 'super_admin', 'manager'] },
   ];
 
   const filteredItems = navItems.filter(

@@ -385,6 +385,10 @@ export const chemicalPrepAPI = {
   delete: async (id: string) => {
     await api.delete(`/chemical-preps/${id}/`);
   },
+  correct: async (id: string, data: any) => {
+    const response = await api.post(`/chemical-preps/${id}/correct/`, data);
+    return response.data;
+  },
 };
 
 // Chiller Log API functions
@@ -438,6 +442,10 @@ export const chillerLogAPI = {
 
   delete: async (id: string) => {
     await api.delete(`/chiller-logs/${id}/`);
+  },
+  correct: async (id: string, data: any) => {
+    const response = await api.post(`/chiller-logs/${id}/correct/`, data);
+    return response.data;
   },
 };
 
@@ -503,6 +511,57 @@ export const boilerLogAPI = {
 
   delete: async (id: string) => {
     await api.delete(`/boiler-logs/${id}/`);
+  },
+  correct: async (id: string, data: any) => {
+    const response = await api.post(`/boiler-logs/${id}/correct/`, data);
+    return response.data;
+  },
+};
+
+// Filter Log API functions
+export const filterLogAPI = {
+  list: async () => {
+    const response = await api.get('/filter-logs/');
+    if (response.data.results) {
+      return response.data.results;
+    }
+    return Array.isArray(response.data) ? response.data : [];
+  },
+
+  get: async (id: string) => {
+    const response = await api.get(`/filter-logs/${id}/`);
+    return response.data;
+  },
+
+  create: async (data: any) => {
+    const response = await api.post('/filter-logs/', data);
+    return response.data;
+  },
+
+  update: async (id: string, data: any) => {
+    const response = await api.put(`/filter-logs/${id}/`, data);
+    return response.data;
+  },
+
+  patch: async (id: string, data: any) => {
+    const response = await api.patch(`/filter-logs/${id}/`, data);
+    return response.data;
+  },
+
+  approve: async (id: string, action: 'approve' | 'reject', remarks?: string) => {
+    const response = await api.post(`/filter-logs/${id}/approve/`, {
+      action,
+      remarks,
+    });
+    return response.data;
+  },
+
+  delete: async (id: string) => {
+    await api.delete(`/filter-logs/${id}/`);
+  },
+  correct: async (id: string, data: any) => {
+    const response = await api.post(`/filter-logs/${id}/correct/`, data);
+    return response.data;
   },
 };
 
@@ -813,6 +872,7 @@ export const reportsAPI = {
     to_date?: string;
     user?: string;
     object_type?: string;
+    object_id?: string;
     event_type?: string;
   }) => {
     const response = await api.get('/reports/audit/', { params });

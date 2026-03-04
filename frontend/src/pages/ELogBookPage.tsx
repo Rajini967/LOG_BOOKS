@@ -31,8 +31,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { Plus, Thermometer, Gauge, Droplets, Save, Clock, Trash2, Filter, X, CheckCircle, XCircle, Edit } from 'lucide-react';
+import { Plus, Thermometer, Gauge, Droplets, Save, Clock, Trash2, Filter, X, CheckCircle, XCircle, Edit, History } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { logbookAPI, chemicalPrepAPI, chillerLogAPI, boilerLogAPI, compressorLogAPI } from '@/lib/api';
@@ -106,7 +107,12 @@ interface ELogBook {
   comment?: string;
   checkedBy: string;
   timestamp: Date;
-  status: 'pending' | 'approved' | 'rejected' | 'draft';
+  status: 'pending' | 'approved' | 'rejected' | 'draft' | 'pending_secondary_approval';
+  /** User who approved or rejected (rejector for rejected / pending_secondary_approval entries) */
+  operator_id?: string;
+  approved_by_id?: string;
+  corrects_id?: string;
+  has_corrections?: boolean;
 }
 
 type PumpStatus = 'ON' | 'OFF';
@@ -278,6 +284,8 @@ export default function ELogBookPage() {
     waterQty: '',
     chemicalQty: '',
     remarks: '',
+    date: '',
+    time: '',
   });
   
   // Whether the current entry is the first chiller reading of the day for the selected equipment
@@ -293,6 +301,8 @@ export default function ELogBookPage() {
   const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
   const [approveCommentOpen, setApproveCommentOpen] = useState(false);
   const [rejectConfirmOpen, setRejectConfirmOpen] = useState(false);
+  const [rejectCommentOpen, setRejectCommentOpen] = useState(false);
+  const [rejectComment, setRejectComment] = useState('');
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [approvalComment, setApprovalComment] = useState('');
@@ -416,7 +426,11 @@ export default function ELogBookPage() {
           comment: log.comment || '',
           checkedBy: log.operator_name,
           timestamp: timestamp,
-          status: log.status as 'pending' | 'approved' | 'rejected',
+          status: log.status as 'pending' | 'approved' | 'rejected' | 'draft' | 'pending_secondary_approval',
+          operator_id: log.operator_id,
+          approved_by_id: log.approved_by_id,
+          corrects_id: log.corrects_id,
+          has_corrections: log.has_corrections,
         });
       });
 
@@ -543,7 +557,7 @@ export default function ELogBookPage() {
   }, [logs, filters, activeFilterCount]);
 
   const pendingDraftLogs = useMemo(
-    () => filteredLogs.filter((log) => log.status === 'pending' || log.status === 'draft'),
+    () => filteredLogs.filter((log) => log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval'),
     [filteredLogs],
   );
   const pendingDraftIds = useMemo(() => pendingDraftLogs.map((log) => log.id), [pendingDraftLogs]);
@@ -742,11 +756,25 @@ export default function ELogBookPage() {
           verified_by: formData.verifiedBy || undefined,
           remarks: formData.remarks || undefined,
         };
-        
-        if (editingLogId) {
-          await chillerLogAPI.update(editingLogId, logData);
-          toast.success('Chiller entry updated successfully');
-        } else {
+        const editingChillerLog = editingLogId ? logs.find((l) => l.id === editingLogId) : null;
+        const canChangeTimestamp =
+          editingChillerLog &&
+          (editingChillerLog.status === 'rejected' || editingChillerLog.status === 'pending_secondary_approval');
+        if (canChangeTimestamp && formData.date && formData.time) {
+          (logData as Record<string, unknown>).timestamp = new Date(`${formData.date}T${formData.time}`).toISOString();
+        }
+        if (editingLogId && editingChillerLog) {
+          const isCorrection =
+            (editingChillerLog.status === 'rejected' || editingChillerLog.status === 'pending_secondary_approval') &&
+            user?.role !== 'operator';
+          if (isCorrection) {
+            await chillerLogAPI.correct(editingLogId, logData);
+            toast.success('Chiller entry corrected as new entry');
+          } else {
+            await chillerLogAPI.update(editingLogId, logData);
+            toast.success('Chiller entry updated successfully');
+          }
+        } else if (!editingLogId) {
           await chillerLogAPI.create(logData);
           toast.success('Chiller entry saved successfully');
         }
@@ -876,7 +904,7 @@ export default function ELogBookPage() {
       await refreshLogs();
     } catch (error: any) {
       console.error('Error approving entry:', error);
-      toast.error(error?.message || 'Failed to approve entry');
+      toast.error(error?.response?.data?.error || error?.message || 'Failed to approve entry');
     }
   };
 
@@ -885,27 +913,28 @@ export default function ELogBookPage() {
     setApproveConfirmOpen(true);
   };
 
-  const handleReject = async (id: string) => {
-    setRejectConfirmOpen(false);
+  const handleReject = async (id: string, remarks: string) => {
+    setRejectCommentOpen(false);
+    setRejectComment('');
     try {
       const log = logs.find(l => l.id === id);
       if (!log) return;
 
       if (log.equipmentType === 'chemical') {
-        await chemicalPrepAPI.approve(id, 'reject');
+        await chemicalPrepAPI.approve(id, 'reject', remarks);
       } else if (log.equipmentType === 'boiler') {
-        await boilerLogAPI.approve(id, 'reject');
+        await boilerLogAPI.approve(id, 'reject', remarks);
       } else if (log.equipmentType === 'chiller') {
-        await chillerLogAPI.approve(id, 'reject');
+        await chillerLogAPI.approve(id, 'reject', remarks);
       } else if (log.equipmentType === 'compressor') {
-        await compressorLogAPI.approve(id, 'reject');
+        await compressorLogAPI.approve(id, 'reject', remarks);
       }
       
       toast.error('Entry rejected');
       await refreshLogs();
     } catch (error: any) {
       console.error('Error rejecting entry:', error);
-      toast.error(error?.message || 'Failed to reject entry');
+      toast.error(error?.response?.data?.remarks?.[0] || error?.message || 'Failed to reject entry');
     }
   };
 
@@ -973,6 +1002,8 @@ export default function ELogBookPage() {
       operatorSign: log.operatorSign || '',
       verifiedBy: log.verifiedBy || '',
       remarks: log.remarks || '',
+      date: log.date || '',
+      time: log.time || '',
     }));
 
     setIsDialogOpen(true);
@@ -1170,6 +1201,14 @@ export default function ELogBookPage() {
     return 'Manual readings for Chillers and Boilers';
   };
 
+  const draftCount = useMemo(() => logs.filter((l) => l.status === 'draft').length, [logs]);
+  const pendingCount = useMemo(
+    () => logs.filter((l) => l.status === 'pending' || l.status === 'pending_secondary_approval').length,
+    [logs],
+  );
+  const approvedCount = useMemo(() => logs.filter((l) => l.status === 'approved').length, [logs]);
+  const rejectedCount = useMemo(() => logs.filter((l) => l.status === 'rejected').length, [logs]);
+
   return (
     <div className="min-h-screen">
       <Header
@@ -1181,11 +1220,17 @@ export default function ELogBookPage() {
         {/* Actions Bar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
+            <Badge variant="secondary">
+              {draftCount} Draft
+            </Badge>
             <Badge variant="pending">
-              {logs.filter(l => l.status === 'pending' || l.status === 'draft').length} Pending
+              {pendingCount} Pending
             </Badge>
             <Badge variant="success">
-              {logs.filter(l => l.status === 'approved').length} Approved
+              {approvedCount} Approved
+            </Badge>
+            <Badge variant="destructive">
+              {rejectedCount} Rejected
             </Badge>
           </div>
 
@@ -1250,6 +1295,7 @@ export default function ELogBookPage() {
                         <SelectItem value="pending">Pending</SelectItem>
                         <SelectItem value="approved">Approved</SelectItem>
                         <SelectItem value="rejected">Rejected</SelectItem>
+                        <SelectItem value="pending_secondary_approval">Pending secondary approval</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1527,6 +1573,34 @@ export default function ELogBookPage() {
                 {/* Chiller Fields */}
                 {formData.equipmentType === 'chiller' && (
                   <>
+                    {/* Date and Time (editable when correcting a rejected or pending-secondary-approval entry) */}
+                    {editingLogId && (() => {
+                      const editingLog = logs.find((l) => l.id === editingLogId);
+                      const canEditDateTime = editingLog && (editingLog.status === 'rejected' || editingLog.status === 'pending_secondary_approval');
+                      return (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>Date</Label>
+                            <Input
+                              type="date"
+                              value={formData.date}
+                              onChange={(e) => setFormData((prev) => ({ ...prev, date: e.target.value }))}
+                              disabled={!canEditDateTime}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Time</Label>
+                            <Input
+                              type="time"
+                              step="1"
+                              value={formData.time}
+                              onChange={(e) => setFormData((prev) => ({ ...prev, time: e.target.value }))}
+                              disabled={!canEditDateTime}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {/* Summary temperatures and pressures */}
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
@@ -3086,7 +3160,7 @@ export default function ELogBookPage() {
                   filteredLogs.map((log) => (
                     <tr key={log.id} className="hover:bg-muted/30 transition-colors">
                       <td className="px-4 py-3 align-middle">
-                        {(log.status === 'pending' || log.status === 'draft') && user?.role !== 'operator' ? (
+                        {(log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval') && user?.role !== 'operator' ? (
                           <Checkbox
                             checked={selectedLogIds.includes(log.id)}
                             onCheckedChange={() => handleToggleLogSelection(log.id)}
@@ -3293,9 +3367,17 @@ export default function ELogBookPage() {
                         <span className="text-sm text-foreground">{log.checkedBy}</span>
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant={log.status === 'approved' ? 'success' : log.status === 'rejected' ? 'danger' : 'pending'}>
-                          {log.status}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant={log.status === 'approved' ? 'success' : log.status === 'rejected' ? 'danger' : log.status === 'pending_secondary_approval' ? 'secondary' : 'pending'}>
+                            {log.status === 'pending_secondary_approval' ? 'Pending' : log.status}
+                          </Badge>
+                          {log.corrects_id && (
+                            <span className="text-[11px] text-muted-foreground">Correction entry</span>
+                          )}
+                          {log.has_corrections && !log.corrects_id && (
+                            <span className="text-[11px] text-muted-foreground">Has corrections</span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
@@ -3306,15 +3388,35 @@ export default function ELogBookPage() {
                                 size="icon"
                                 className={cn(
                                   'h-7 w-7',
-                                  log.status === 'pending' || log.status === 'draft'
+                                  (log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval') &&
+                                  !(log.status === 'pending_secondary_approval' && log.approved_by_id === user?.id)
                                     ? 'text-green-600 hover:text-green-700 hover:bg-green-500/10'
                                     : 'opacity-40 cursor-not-allowed'
                                 )}
-                                title={log.status === 'pending' || log.status === 'draft' ? 'Approve' : 'Approved'}
+                                title={
+                                  log.status === 'pending_secondary_approval' && log.approved_by_id === user?.id
+                                    ? 'A different person must approve this corrected entry.'
+                                    : (log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval'
+                                        ? 'Approve'
+                                        : 'Approved')
+                                }
                                 onClick={() => {
-                                  if (log.status === 'pending' || log.status === 'draft') handleApproveClick(log.id);
+                                  if (log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval') {
+                                    if (log.status === 'pending_secondary_approval' && log.approved_by_id === user?.id) {
+                                      toast.error('A different person must approve this corrected entry.');
+                                      return;
+                                    }
+                                    if (log.operator_id === user?.id) {
+                                      toast.error('The log book entry must be approved by a different user than the operator (Log Book Done By).');
+                                      return;
+                                    }
+                                    handleApproveClick(log.id);
+                                  }
                                 }}
-                                disabled={log.status !== 'pending' && log.status !== 'draft'}
+                                disabled={
+                                  (log.status !== 'pending' && log.status !== 'draft' && log.status !== 'pending_secondary_approval') ||
+                                  (log.status === 'pending_secondary_approval' && log.approved_by_id === user?.id)
+                                }
                               >
                                 <CheckCircle className="w-4 h-4" />
                               </Button>
@@ -3323,26 +3425,47 @@ export default function ELogBookPage() {
                                 size="icon"
                                 className={cn(
                                   'h-7 w-7',
-                                  log.status === 'pending' || log.status === 'draft'
+                                  (log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval')
                                     ? 'text-destructive hover:text-destructive hover:bg-destructive/10'
                                     : 'opacity-40 cursor-not-allowed'
                                 )}
-                                title={log.status === 'pending' || log.status === 'draft' ? 'Reject' : 'Rejected'}
+                                title={log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval' ? 'Reject' : 'Rejected'}
                                 onClick={() => {
-                                  if (log.status === 'pending' || log.status === 'draft') handleRejectClick(log.id);
+                                  if (log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval') handleRejectClick(log.id);
                                 }}
-                                disabled={log.status !== 'pending' && log.status !== 'draft'}
+                                disabled={log.status !== 'pending' && log.status !== 'draft' && log.status !== 'pending_secondary_approval'}
                               >
                                 <XCircle className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7"
-                                title="Edit entry"
-                                onClick={() => handleEditLog(log)}
+                                className={cn(
+                                  'h-7 w-7',
+                                  (log.status === 'rejected' || log.status === 'pending_secondary_approval')
+                                    ? ''
+                                    : 'opacity-40 cursor-not-allowed'
+                                )}
+                                title={log.status === 'rejected' || log.status === 'pending_secondary_approval' ? 'Edit entry' : 'Edit only available after reject'}
+                                onClick={() => {
+                                  if (log.status === 'rejected' || log.status === 'pending_secondary_approval') handleEditLog(log);
+                                }}
+                                disabled={log.status !== 'rejected' && log.status !== 'pending_secondary_approval'}
                               >
                                 <Edit className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                title="View history (old/new values)"
+                                asChild
+                              >
+                                <Link
+                                  to={`/reports?tab=audit-trail&object_type=chiller_log&object_id=${log.id}`}
+                                >
+                                  <History className="w-4 h-4" />
+                                </Link>
                               </Button>
                             </>
                           )}
@@ -3469,7 +3592,7 @@ export default function ELogBookPage() {
                     toast.success(`${ids.length} entries approved successfully.`);
                   } catch (error: any) {
                     console.error('Error approving entries:', error);
-                    toast.error(error?.message || 'Failed to approve some entries');
+                    toast.error(error?.response?.data?.error || error?.message || 'Failed to approve some entries');
                   }
                 }}
               >
@@ -3480,7 +3603,7 @@ export default function ELogBookPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Reject Confirmation Alert */}
+      {/* Reject: Step 1 – Confirm */}
       <AlertDialog open={rejectConfirmOpen} onOpenChange={setRejectConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -3492,7 +3615,10 @@ export default function ELogBookPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => selectedLogId && handleReject(selectedLogId)}
+              onClick={() => {
+                setRejectConfirmOpen(false);
+                setRejectCommentOpen(true);
+              }}
               className="bg-red-600 hover:bg-red-700 text-white"
             >
               Reject
@@ -3500,6 +3626,68 @@ export default function ELogBookPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Reject: Step 2 – Mandatory comment */}
+      <Dialog
+        open={rejectCommentOpen}
+        onOpenChange={(open) => {
+          setRejectCommentOpen(open);
+          if (!open) {
+            setRejectComment('');
+            setSelectedLogId(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Rejection Comment (Required)</DialogTitle>
+            <DialogDescription>
+              Please enter a comment for this rejection.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="reject-comment">Comment <span className="text-destructive">*</span></Label>
+              <Textarea
+                id="reject-comment"
+                value={rejectComment}
+                onChange={(e) => setRejectComment(e.target.value)}
+                placeholder="Enter rejection comment..."
+                rows={3}
+                className="resize-none"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setRejectCommentOpen(false);
+                  setRejectComment('');
+                  setSelectedLogId(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => {
+                  const comment = rejectComment.trim();
+                  if (!comment) {
+                    toast.error('Comment is required for rejection');
+                    return;
+                  }
+                  if (selectedLogId) {
+                    handleReject(selectedLogId, comment);
+                    setSelectedLogId(null);
+                  }
+                }}
+              >
+                Reject
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -189,6 +189,7 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
             'remarks',
             'comment',
             'status',
+            'timestamp',
         ]
         old_values = {field: getattr(instance, field) for field in tracked_fields}
 
@@ -221,6 +222,11 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
                 event_type="log_update",
             )
 
+        # When a rejected log is corrected (updated), move to pending secondary approval
+        if instance.status == 'rejected':
+            updated.status = 'pending_secondary_approval'
+            updated.save(update_fields=['status'])
+
         return response
 
     def partial_update(self, request, *args, **kwargs):
@@ -230,33 +236,171 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
         """
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
-    
+
+    @action(detail=True, methods=['post'])
+    def correct(self, request, pk=None):
+        """
+        Create a new chiller log entry as a correction of a rejected or pending-secondary-approval log.
+        The original entry remains unchanged; old/new values are recorded in the audit trail.
+        """
+        original = self.get_object()
+        if original.status not in ('rejected', 'pending_secondary_approval'):
+            return Response(
+                {'error': 'Only rejected or pending secondary approval entries can be corrected as new entries.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = request.data.copy()
+        # Let the serializer handle timestamp parsing; we'll pull it from validated_data
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+
+        validated = dict(serializer.validated_data)
+        timestamp = validated.pop('timestamp', None)
+
+        # Base payload for the new correction entry
+        payload = {
+            **validated,
+            'corrects': original,
+            'operator': request.user,
+            'operator_name': request.user.name or request.user.email,
+            'equipment_id': original.equipment_id,
+            'site_id': original.site_id,
+            'status': 'pending_secondary_approval',
+        }
+        if timestamp is not None:
+            payload['timestamp'] = timestamp
+
+        new_log = ChillerLog.objects.create(**payload)
+
+        # Record field-by-field diffs in audit trail
+        tracked_fields = [
+            'chiller_supply_temp',
+            'chiller_return_temp',
+            'cooling_tower_supply_temp',
+            'cooling_tower_return_temp',
+            'ct_differential_temp',
+            'chiller_water_inlet_pressure',
+            'chiller_makeup_water_flow',
+            'evap_water_inlet_pressure',
+            'evap_water_outlet_pressure',
+            'evap_entering_water_temp',
+            'evap_leaving_water_temp',
+            'evap_approach_temp',
+            'cond_water_inlet_pressure',
+            'cond_water_outlet_pressure',
+            'cond_entering_water_temp',
+            'cond_leaving_water_temp',
+            'cond_approach_temp',
+            'chiller_control_signal',
+            'avg_motor_current',
+            'compressor_running_time_min',
+            'starter_energy_kwh',
+            'cooling_tower_pump_status',
+            'chilled_water_pump_status',
+            'cooling_tower_fan_status',
+            'cooling_tower_blowoff_valve_status',
+            'cooling_tower_blowdown_time_min',
+            'cooling_tower_chemical_name',
+            'cooling_tower_chemical_qty_per_day',
+            'chilled_water_pump_chemical_name',
+            'chilled_water_pump_chemical_qty_kg',
+            'cooling_tower_fan_chemical_name',
+            'cooling_tower_fan_chemical_qty_kg',
+            'recording_frequency',
+            'operator_sign',
+            'verified_by',
+            'remarks',
+            'comment',
+            'status',
+            'timestamp',
+        ]
+        extra_base = {
+            "equipment_id": original.equipment_id,
+            "site_id": original.site_id,
+            "original_id": str(original.id),
+            "correction_id": str(new_log.id),
+        }
+        for field in tracked_fields:
+            before = getattr(original, field)
+            after = getattr(new_log, field)
+            if before == after:
+                continue
+            extra = dict(extra_base)
+            extra["field_label"] = field
+            log_limit_change(
+                user=request.user,
+                object_type="chiller_log",
+                key=str(new_log.id),
+                field_name=field,
+                old=before,
+                new=after,
+                extra=extra,
+                event_type="log_correction",
+            )
+
+        serializer = self.get_serializer(new_log)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        """Approve or reject a chiller log."""
+        """Approve or reject a chiller log. Handles primary approval, secondary approval (after correction), and reject."""
         log = self.get_object()
         action_type = request.data.get('action', 'approve')
-        remarks = request.data.get('remarks', '')
+        remarks = (request.data.get('remarks') or '').strip()
+        
+        if action_type == 'reject' and not remarks:
+            raise ValidationError({'remarks': ['Comment is required when rejecting.']})
         
         if action_type == 'approve':
-            log.status = 'approved'
+            # Primary/secondary approver must be different from the operator (Log Book Done By)
+            if log.operator_id and log.operator_id == request.user.id:
+                return Response(
+                    {'error': 'The log book entry must be approved by a different user than the operator (Log Book Done By).'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if log.status == 'pending_secondary_approval':
+                # Secondary approval must be done by a different person than who rejected
+                if log.approved_by_id and log.approved_by_id == request.user.id:
+                    return Response(
+                        {'error': 'A different person must perform secondary approval. The person who rejected cannot approve the corrected entry.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                # Secondary approval (after correction)
+                log.status = 'approved'
+                log.secondary_approved_by = request.user
+                log.secondary_approved_at = timezone.now()
+            elif log.status in ('pending', 'draft'):
+                log.status = 'approved'
+            else:
+                return Response(
+                    {'error': 'Only pending, draft, or pending secondary approval entries can be approved.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         elif action_type == 'reject':
+            if log.status not in ('pending', 'draft', 'pending_secondary_approval'):
+                return Response(
+                    {'error': 'Only pending, draft, or pending secondary approval entries can be rejected.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             log.status = 'rejected'
+            log.secondary_approved_by = None
+            log.secondary_approved_at = None
         else:
             return Response(
                 {'error': 'Invalid action. Use "approve" or "reject".'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        log.approved_by = request.user
-        from django.utils import timezone
-        log.approved_at = timezone.now()
+        if action_type == 'reject' or (action_type == 'approve' and log.status == 'approved'):
+            log.approved_by = request.user
+            log.approved_at = timezone.now()
         if remarks:
             log.comment = remarks
         log.save()
         
-        # Create report entry when approved
-        if action_type == 'approve':
+        # Create report entry when approved (primary or secondary)
+        if action_type == 'approve' and log.status == 'approved':
             from reports.utils import create_report_entry
             title = f"Chiller Monitoring - {log.equipment_id or 'N/A'}"
             create_report_entry(

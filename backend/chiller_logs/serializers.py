@@ -5,7 +5,10 @@ from .models import ChillerLog
 class ChillerLogSerializer(serializers.ModelSerializer):
     operator_id = serializers.UUIDField(source='operator.id', read_only=True)
     approved_by_id = serializers.UUIDField(source='approved_by.id', read_only=True, allow_null=True)
-    
+    secondary_approved_by_id = serializers.UUIDField(source='secondary_approved_by.id', read_only=True, allow_null=True)
+    corrects_id = serializers.UUIDField(source='corrects.id', read_only=True, allow_null=True)
+    has_corrections = serializers.SerializerMethodField()
+
     class Meta:
         model = ChillerLog
         fields = [
@@ -30,11 +33,26 @@ class ChillerLogSerializer(serializers.ModelSerializer):
             'cooling_tower_fan_chemical_name', 'cooling_tower_fan_chemical_qty_kg',
             'recording_frequency', 'operator_sign', 'verified_by',
             'remarks', 'comment', 'operator_id', 'operator_name', 'status',
-            'approved_by_id', 'approved_at', 'timestamp',
+            'approved_by_id', 'approved_at', 'secondary_approved_by_id', 'secondary_approved_at',
+            'corrects_id', 'has_corrections', 'timestamp',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'operator_id', 'operator_name', 'approved_by_id', 'approved_at',
-            'timestamp', 'created_at', 'updated_at'
+            'secondary_approved_by_id', 'secondary_approved_at',
+            'corrects_id', 'has_corrections',
+            'created_at', 'updated_at'
         ]
+
+    def update(self, instance, validated_data):
+        # Allow timestamp change only when correcting a rejected or pending-secondary-approval entry
+        timestamp = validated_data.pop('timestamp', None)
+        if timestamp is not None and instance.status not in ('rejected', 'pending_secondary_approval'):
+            validated_data['timestamp'] = instance.timestamp  # keep unchanged
+        elif timestamp is not None:
+            validated_data['timestamp'] = timestamp
+        return super().update(instance, validated_data)
+
+    def get_has_corrections(self, obj: ChillerLog) -> bool:
+        return obj.corrections.exists()
 

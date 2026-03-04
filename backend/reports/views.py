@@ -55,6 +55,7 @@ class AuditReportViewSet(viewsets.ReadOnlyModelViewSet):
         to_date = self.request.query_params.get("to_date")
         user_id = self.request.query_params.get("user")
         object_type = self.request.query_params.get("object_type")
+        object_id = self.request.query_params.get("object_id")
         event_type = self.request.query_params.get("event_type")
 
         if from_date:
@@ -65,6 +66,8 @@ class AuditReportViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(user_id=user_id)
         if object_type:
             qs = qs.filter(object_type=object_type)
+        if object_id:
+            qs = qs.filter(object_id=object_id)
         if event_type:
             qs = qs.filter(event_type=event_type)
 

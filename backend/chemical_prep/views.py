@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
 from .models import ChemicalPreparation
 from .serializers import ChemicalPreparationSerializer
 from accounts.permissions import CanLogEntries, CanApproveReports
@@ -39,16 +40,16 @@ class ChemicalPreparationViewSet(viewsets.ModelViewSet):
             'chemical_name',
             'chemical_category',
             'chemical_percent',
+            'chemical_concentration',
             'solution_concentration',
             'water_qty',
             'chemical_qty',
             'batch_no',
-            'quantity_taken',
-            'reason',
             'done_by',
             'remarks',
             'comment',
             'checked_by',
+            'timestamp',
         ]
         old_values = {field: getattr(instance, field) for field in tracked_fields}
 
@@ -82,6 +83,11 @@ class ChemicalPreparationViewSet(viewsets.ModelViewSet):
                 event_type="log_update",
             )
 
+        # When a rejected entry is corrected (updated), move to pending secondary approval
+        if instance.status == 'rejected':
+            updated.status = 'pending_secondary_approval'
+            updated.save(update_fields=['status'])
+
         return response
 
     def partial_update(self, request, *args, **kwargs):
@@ -90,33 +96,144 @@ class ChemicalPreparationViewSet(viewsets.ModelViewSet):
         """
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
-    
+
+    @action(detail=True, methods=['post'])
+    def correct(self, request, pk=None):
+        """
+        Create a new chemical preparation entry as a correction of a rejected or pending-secondary-approval entry.
+        """
+        original = self.get_object()
+        if original.status not in ('rejected', 'pending_secondary_approval'):
+            return Response(
+                {'error': 'Only rejected or pending secondary approval entries can be corrected as new entries.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = request.data.copy()
+
+        serializer = self.get_serializer(data=data)
+        serializer.is_valid(raise_exception=True)
+
+        validated = dict(serializer.validated_data)
+        timestamp = validated.pop('timestamp', None)
+
+        payload = {
+            **validated,
+            'corrects': original,
+            'operator': request.user,
+            'operator_name': request.user.name or request.user.email,
+            'equipment_name': original.equipment_name,
+            'chemical_name': original.chemical_name,
+            'status': 'pending_secondary_approval',
+        }
+        if timestamp is not None:
+            payload['timestamp'] = timestamp
+
+        new_prep = ChemicalPreparation.objects.create(**payload)
+
+        tracked_fields = [
+            'equipment_name',
+            'chemical_name',
+            'chemical_category',
+            'chemical_percent',
+            'chemical_concentration',
+            'solution_concentration',
+            'water_qty',
+            'chemical_qty',
+            'batch_no',
+            'done_by',
+            'remarks',
+            'comment',
+            'checked_by',
+            'status',
+            'timestamp',
+        ]
+        extra_base = {
+            "equipment_name": original.equipment_name,
+            "chemical_name": original.chemical_name,
+            "original_id": str(original.id),
+            "correction_id": str(new_prep.id),
+        }
+        for field in tracked_fields:
+            before = getattr(original, field)
+            after = getattr(new_prep, field)
+            if before == after:
+                continue
+            extra = dict(extra_base)
+            extra["field_label"] = field
+            log_limit_change(
+                user=request.user,
+                object_type="chemical_log",
+                key=str(new_prep.id),
+                field_name=field,
+                old=before,
+                new=after,
+                extra=extra,
+                event_type="log_correction",
+            )
+
+        serializer = self.get_serializer(new_prep)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
-        """Approve or reject a chemical preparation."""
+        """Approve or reject a chemical preparation. Handles primary, secondary approval (after correction), and reject."""
         prep = self.get_object()
-        action_type = request.data.get('action', 'approve')  # 'approve' or 'reject'
-        remarks = request.data.get('remarks', '')
+        action_type = request.data.get('action', 'approve')
+        remarks = (request.data.get('remarks') or '').strip()
+        
+        if action_type == 'reject' and not remarks:
+            raise ValidationError({'remarks': ['Comment is required when rejecting.']})
         
         if action_type == 'approve':
-            prep.status = 'approved'
+            # Primary/secondary approver must be different from the operator (Log Book Done By)
+            if prep.operator_id and prep.operator_id == request.user.id:
+                return Response(
+                    {'error': 'The log book entry must be approved by a different user than the operator (Log Book Done By).'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if prep.status == 'pending_secondary_approval':
+                # Secondary approval must be done by a different person than who rejected
+                if prep.approved_by_id and prep.approved_by_id == request.user.id:
+                    return Response(
+                        {'error': 'A different person must perform secondary approval. The person who rejected cannot approve the corrected entry.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                prep.status = 'approved'
+                prep.secondary_approved_by = request.user
+                from django.utils import timezone
+                prep.secondary_approved_at = timezone.now()
+            elif prep.status in ('pending', 'draft'):
+                prep.status = 'approved'
+            else:
+                return Response(
+                    {'error': 'Only pending, draft, or pending secondary approval entries can be approved.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         elif action_type == 'reject':
+            if prep.status not in ('pending', 'draft', 'pending_secondary_approval'):
+                return Response(
+                    {'error': 'Only pending, draft, or pending secondary approval entries can be rejected.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             prep.status = 'rejected'
+            prep.secondary_approved_by = None
+            prep.secondary_approved_at = None
         else:
             return Response(
                 {'error': 'Invalid action. Use "approve" or "reject".'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        prep.approved_by = request.user
         from django.utils import timezone
-        prep.approved_at = timezone.now()
+        if action_type == 'reject' or (action_type == 'approve' and prep.status == 'approved'):
+            prep.approved_by = request.user
+            prep.approved_at = timezone.now()
         if remarks:
             prep.comment = remarks
         prep.save()
         
-        # Create report entry when approved
-        if action_type == 'approve':
+        if action_type == 'approve' and prep.status == 'approved':
             from reports.utils import create_report_entry
             title = f"{prep.chemical_name or 'Chemical Preparation'} - {prep.equipment_name or 'N/A'}"
             create_report_entry(
