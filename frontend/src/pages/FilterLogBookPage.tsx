@@ -242,38 +242,40 @@ const FilterLogBookPage: React.FC = () => {
 
   const loadEquipment = async () => {
     try {
-      const categories = (await equipmentCategoryAPI.list()) as { id: string; name: string }[];
-      const filterCategoryIds = (categories || [])
-        .filter((c) => {
-          const n = (c.name || "").toLowerCase().trim();
-          return n === "filter" || n === "filters" || n === "hvac";
-        })
-        .map((c) => c.id);
-      let data: any[] = [];
-      if (filterCategoryIds.length > 0) {
-        const results = await Promise.all(
-          filterCategoryIds.map((id) => equipmentAPI.list({ category: id }))
-        );
-        const seen = new Set<string>();
-        for (const arr of results) {
-          for (const e of arr || []) {
-            if (e?.id && !seen.has(e.id)) {
-              seen.add(e.id);
-              data.push(e);
-            }
-          }
-        }
+      // Only show Chemical-related equipments that are active and approved,
+      // matching the Filter Register assignment behaviour.
+      const categories = (await equipmentCategoryAPI.list()) as {
+        id: string;
+        name: string;
+      }[];
+      const chemicalCategory = (categories || []).find((c) => {
+        const n = (c.name || "").toLowerCase().trim();
+        return n === "chemical" || n === "chemicals";
+      });
+
+      if (!chemicalCategory) {
+        setEquipmentOptions([]);
+        return;
       }
-      const options: EquipmentOption[] = data
-        .filter((e) => e.is_active !== false)
-        .map((e) => ({
+
+      const list = (await equipmentAPI.list({
+        category: chemicalCategory.id,
+      })) as any[];
+
+      const options: EquipmentOption[] = (list || [])
+        .filter(
+          (e: any) => e?.is_active !== false && e?.status === "approved",
+        )
+        .map((e: any) => ({
           id: e.id,
           equipment_number: e.equipment_number,
           name: e.name,
         }));
+
       setEquipmentOptions(options);
     } catch (error) {
       console.error("Error loading equipment:", error);
+      setEquipmentOptions([]);
     }
   };
 
@@ -1140,7 +1142,7 @@ const FilterLogBookPage: React.FC = () => {
                       <SelectContent className="!z-[9999] max-h-60 overflow-y-auto" position="popper">
                         {equipmentOptions.length === 0 ? (
                           <SelectItem value="__none__" disabled className="text-muted-foreground">
-                            No equipment found. Add in Equipment Master (Filter/HVAC category).
+                            No equipment found. Add and approve Chemical equipments first in Equipment Master.
                           </SelectItem>
                         ) : (
                           equipmentOptions.map((eq) => (

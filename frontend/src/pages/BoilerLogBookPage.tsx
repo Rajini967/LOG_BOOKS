@@ -254,8 +254,12 @@ const BoilerLogBookPage: React.FC = () => {
           ? await equipmentAPI.list({ category: boilerCategory.id })
           : await equipmentAPI.list();
         const options = (list || [])
-          .filter((e: any) => e?.is_active !== false)
-          .map((e: any) => ({ id: e.id, equipment_number: e.equipment_number, name: e.name || "" }));
+          .filter((e: any) => e?.is_active !== false && e?.status === "approved")
+          .map((e: any) => ({
+            id: e.id,
+            equipment_number: e.equipment_number,
+            name: e.name || "",
+          }));
         setEquipmentOptions(options);
       } catch (error) {
         console.error("Failed to load boiler equipment list", error);

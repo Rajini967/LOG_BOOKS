@@ -276,6 +276,43 @@ const ChemicalLogBookPage: React.FC = () => {
     })();
   }, []);
 
+  // Derive chemical options per equipment from assignments
+  const chemOptionsByEquipment = useMemo(() => {
+    const map: Record<
+      string,
+      { value: string; label: string; category: "major" | "minor"; chemicalId?: string | null }[]
+    > = {};
+
+    assignments.forEach((a) => {
+      const equipment = a.equipment_name?.trim();
+      const name = a.chemical_name?.trim();
+      const formula = a.chemical_formula?.trim();
+      if (!equipment || !name) return;
+
+      const label = formula ? `${formula} – ${name}` : name;
+      const value = label;
+
+      if (!map[equipment]) {
+        map[equipment] = [];
+      }
+
+      // Avoid duplicate options with the same label and category
+      const exists = map[equipment].some(
+        (opt) => opt.label === label && opt.category === a.category && opt.chemicalId === a.chemical_id,
+      );
+      if (!exists) {
+        map[equipment].push({
+          value,
+          label,
+          category: a.category,
+          chemicalId: a.chemical_id,
+        });
+      }
+    });
+
+    return map;
+  }, [assignments]);
+
   // Load equipment options and assignments so Equipment dropdown auto-fills category + chemical
   useEffect(() => {
     (async () => {
@@ -522,11 +559,11 @@ const ChemicalLogBookPage: React.FC = () => {
     e.preventDefault();
     try {
       if (!formData.equipmentName) {
-        toast.error("Please enter Equipment Name.");
+        toast.error("Please select Equipment Name.");
         return;
       }
       if (!formData.chemicalName) {
-        toast.error("Please enter Chemical Name.");
+        toast.error("Please select Chemical Name.");
         return;
       }
       const numericFields: { key: keyof typeof formData; label: string }[] = [
@@ -978,24 +1015,25 @@ const ChemicalLogBookPage: React.FC = () => {
                     <div className="space-y-2">
                       <Label>Equipment Name *</Label>
                       <Select
-                        value={formData.equipmentName}
+                        value={formData.equipmentName || "__none__"}
                         onValueChange={(v) => {
-                          const assignment = assignments.find((a) => a.equipment_name === v);
+                          const nextEquipmentName = v === "__none__" ? "" : v;
                           setFormData({
                             ...formData,
-                            equipmentName: v,
-                            chemicalCategory: assignment?.category ?? formData.chemicalCategory,
-                            chemicalName: assignment
-                              ? `${assignment.chemical_formula} – ${assignment.chemical_name}`
-                              : formData.chemicalName,
+                            equipmentName: nextEquipmentName,
+                            // Clear chemical-related fields; user must pick chemical explicitly
+                            chemicalName: "",
+                            chemicalCategory: "major",
                           });
-                          setSelectedChemicalId(assignment?.chemical_id ?? null);
+                          setSelectedChemicalId(null);
+                          setResolvedChemicalId(null);
                         }}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select equipment" />
                         </SelectTrigger>
                         <SelectContent className="max-h-60 overflow-y-auto">
+                          <SelectItem value="__none__">Select equipment</SelectItem>
                           {equipmentOptions.map((eq) => (
                             <SelectItem key={eq.id} value={eq.name}>
                               {eq.name}
@@ -1006,18 +1044,23 @@ const ChemicalLogBookPage: React.FC = () => {
                     </div>
                     <div className="space-y-2">
                       <Label>Chemical Category</Label>
-                      <Input
-                        type="text"
-                        value={
-                          formData.chemicalCategory === "minor"
-                            ? "Minor"
-                            : formData.chemicalCategory === "major"
-                              ? "Major"
-                              : ""
+                      <Select
+                        value={formData.chemicalCategory}
+                        onValueChange={(v) =>
+                          setFormData({
+                            ...formData,
+                            chemicalCategory: v as "major" | "minor",
+                          })
                         }
-                        disabled
-                        placeholder="Auto from equipment assignment"
-                      />
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select category" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="major">Major</SelectItem>
+                          <SelectItem value="minor">Minor</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
 
@@ -1050,32 +1093,72 @@ const ChemicalLogBookPage: React.FC = () => {
 
                   <div className="space-y-2">
                     <Label>Chemical Name *</Label>
-                    <Input
-                      type="text"
-                      value={formData.chemicalName}
-                      disabled
-                      placeholder="Auto from equipment assignment"
-                    />
-                    {formData.chemicalName && (chemicalIdForStock || (currentAssignment && normalizeLocationForApi(currentAssignment.location ?? undefined))) && (
-                      <div className="mt-2 text-sm text-muted-foreground">
-                        {selectedStockInfo &&
-                        selectedStockInfo.availableQtyKg != null &&
-                        selectedStockInfo.availableQtyKg > 0 ? (
-                            <span>
-                              Available stock: {selectedStockInfo.availableQtyKg}{" "}
-                              {selectedStockInfo.unit ?? "kg"}
-                              {selectedStockInfo.pricePerUnit != null &&
-                                ` at price ${selectedStockInfo.pricePerUnit} per ${selectedStockInfo.unit ?? "kg"}`}
-                              {selectedStockInfo.site ? ` (site: ${selectedStockInfo.site})` : ""}
-                            </span>
-                          ) : (
-                            <span className="text-destructive">
-                              No stock available for this chemical. You cannot enter quantity until
-                              stock is added.
-                            </span>
-                          )}
-                      </div>
-                    )}
+                    {(() => {
+                      const optionsForEquipment =
+                        chemOptionsByEquipment[formData.equipmentName] || [];
+                      return (
+                        <>
+                          <Select
+                            value={formData.chemicalName || "__none__"}
+                            onValueChange={(v) => {
+                              if (v === "__none__") {
+                                setFormData({
+                                  ...formData,
+                                  chemicalName: "",
+                                  chemicalCategory: "major",
+                                });
+                                setSelectedChemicalId(null);
+                                setResolvedChemicalId(null);
+                                return;
+                              }
+                              const opt = optionsForEquipment.find(
+                                (o) => o.value === v,
+                              );
+                              if (opt) {
+                                setFormData({
+                                  ...formData,
+                                  chemicalName: opt.label,
+                                  chemicalCategory: opt.category,
+                                });
+                                setSelectedChemicalId(opt.chemicalId ?? null);
+                                setResolvedChemicalId(null);
+                              }
+                            }}
+                            disabled={
+                              !formData.equipmentName ||
+                              optionsForEquipment.length === 0
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue
+                                placeholder={
+                                  !formData.equipmentName
+                                    ? "Select equipment first"
+                                    : optionsForEquipment.length === 0
+                                    ? "No chemicals assigned for this equipment"
+                                    : "Select chemical"
+                                }
+                              />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-60 overflow-y-auto">
+                              <SelectItem value="__none__">Select chemical</SelectItem>
+                              {optionsForEquipment.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {formData.equipmentName &&
+                            optionsForEquipment.length === 0 && (
+                              <p className="mt-1 text-xs text-amber-600">
+                                No chemicals assigned for this equipment. Configure them
+                                in Chemical Equipment Assignment.
+                              </p>
+                            )}
+                        </>
+                      );
+                    })()}
                   </div>
 
                   <div className="space-y-2">
@@ -1173,12 +1256,40 @@ const ChemicalLogBookPage: React.FC = () => {
                           }
                           placeholder="e.g., 0.32"
                           disabled={
-                            !!(chemicalIdForStock || (currentAssignment && normalizeLocationForApi(currentAssignment.location ?? undefined))) &&
+                            !!(
+                              chemicalIdForStock ||
+                              (currentAssignment &&
+                                normalizeLocationForApi(
+                                  currentAssignment.location ?? undefined,
+                                ))
+                            ) &&
                             (!selectedStockInfo ||
                               selectedStockInfo.availableQtyKg == null ||
                               selectedStockInfo.availableQtyKg === 0)
                           }
                         />
+                        {formData.chemicalName &&
+                          (chemicalIdForStock ||
+                            (currentAssignment &&
+                              normalizeLocationForApi(
+                                currentAssignment.location ?? undefined,
+                              ))) && (
+                            <div className="mt-2 text-sm text-muted-foreground">
+                              {selectedStockInfo &&
+                              selectedStockInfo.availableQtyKg != null &&
+                              selectedStockInfo.availableQtyKg > 0 ? (
+                                <span>
+                                  Available stock: {selectedStockInfo.availableQtyKg}{" "}
+                                  {selectedStockInfo.unit ?? "kg"}
+                                </span>
+                              ) : (
+                                <span className="text-destructive">
+                                  No stock available for this chemical. You cannot
+                                  enter quantity until stock is added.
+                                </span>
+                              )}
+                            </div>
+                          )}
                       </div>
                     </div>
                   </div>

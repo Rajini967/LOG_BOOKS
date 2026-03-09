@@ -1,7 +1,10 @@
 from django.db.models.deletion import ProtectedError
+from django.utils import timezone
 from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 
 from accounts.permissions import IsManagerOrSuperAdmin
 
@@ -78,7 +81,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         return qs
 
     def get_permissions(self):
-        if self.action in ["create", "update", "partial_update", "destroy"]:
+        if self.action in ["create", "update", "partial_update", "destroy", "approve"]:
             return [IsAuthenticated(), IsManagerOrSuperAdmin()]
         return [IsAuthenticated()]
 
@@ -107,4 +110,41 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                 {"detail": msg},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        """
+        Approve or reject an equipment master record.
+
+        Body: { "action": "approve" | "reject" }
+        Rule: approver must be different from the user who created the record.
+        """
+        equipment = self.get_object()
+        action_type = (request.data.get("action") or "approve").strip().lower()
+
+        if action_type not in ("approve", "reject"):
+            raise ValidationError({"action": ["Invalid action. Use 'approve' or 'reject'."]})
+
+        # Enforce different user for approval/rejection vs creator
+        creator_id = getattr(equipment.created_by, "id", None)
+        if creator_id and creator_id == request.user.id:
+            raise ValidationError(
+                {
+                    "detail": [
+                        "Equipment must be approved or rejected by a different user than the one who created it."
+                    ]
+                }
+            )
+
+        if action_type == "approve":
+            equipment.status = "approved"
+        else:
+            equipment.status = "rejected"
+
+        equipment.approved_by = request.user
+        equipment.approved_at = timezone.now()
+        equipment.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+
+        serializer = self.get_serializer(equipment)
+        return Response(serializer.data)
 

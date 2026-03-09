@@ -78,6 +78,20 @@ class FilterMasterViewSet(viewsets.ModelViewSet):
         Approve a pending filter.
         """
         instance: FilterMaster = self.get_object()
+
+        # Business rule: the user who registered the filter (created_by)
+        # cannot be the same user who approves it.
+        if instance.created_by_id and instance.created_by_id == request.user.id:
+            return Response(
+                {
+                    "detail": (
+                        "Filter must be approved by a different user than the one who "
+                        "registered it (Done By)."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if instance.status not in ["pending", "rejected"]:
             return Response(
                 {"detail": "Only pending or rejected filters can be approved."},

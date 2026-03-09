@@ -454,7 +454,7 @@ export default function ELogBookPage() {
         ]);
         const map = (arr: any[]) =>
           (arr || [])
-            .filter((e) => e?.is_active !== false)
+            .filter((e) => e?.is_active !== false && e?.status === 'approved')
             .map((e) => ({ id: e.id, equipment_number: e.equipment_number, name: e.name || '' }));
         setEquipmentByType({
           chiller: map(chillerEq as any[]),

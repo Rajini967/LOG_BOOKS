@@ -24,6 +24,7 @@ import {
   filterAssignmentAPI,
   filterScheduleAPI,
   equipmentAPI,
+  equipmentCategoryAPI,
 } from "@/lib/api";
 import { Loader2, Plus, CheckCircle2, XCircle, Link2, ArrowLeft, Trash2 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
@@ -38,6 +39,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface FilterCategory {
   id: string;
@@ -58,6 +60,7 @@ interface FilterMaster {
   size_h?: number | null;
   micron_size: string;
   status: "draft" | "pending" | "approved" | "rejected" | "inactive";
+  created_by?: string | null;
 }
 
 interface EquipmentOption {
@@ -72,6 +75,7 @@ const MICRON_OPTIONS = ["0.2", "0.45", "1", "3", "5", "10", "20", "100"];
 
 const FilterRegisterPage: React.FC = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const [categories, setCategories] = useState<FilterCategory[]>([]);
   const [filters, setFilters] = useState<FilterMaster[]>([]);
@@ -146,22 +150,47 @@ const FilterRegisterPage: React.FC = () => {
 
   const loadEquipment = async () => {
     try {
-      const data = await equipmentAPI.list();
-      setEquipmentOptions(
-        data.map((item: any) => ({
+      // Only load Chemical-related equipments (Chemical / Chemicals),
+      // and only those that are active and approved.
+      const categories = (await equipmentCategoryAPI.list()) as {
+        id: string;
+        name: string;
+      }[];
+      const chemicalCategory = categories.find((c) => {
+        const name = (c.name || "").toLowerCase().trim();
+        return name === "chemical" || name === "chemicals";
+      });
+
+      if (!chemicalCategory) {
+        setEquipmentOptions([]);
+        return;
+      }
+
+      const list = (await equipmentAPI.list({
+        category: chemicalCategory.id,
+      })) as any[];
+
+      const options = (list || [])
+        .filter(
+          (item: any) =>
+            item?.is_active !== false && item?.status === "approved",
+        )
+        .map((item: any) => ({
           id: item.id,
           equipment_number: item.equipment_number,
           name: item.name,
           site_id: item.site_id ?? null,
           capacity: item.capacity ?? null,
-        }))
-      );
+        }));
+
+      setEquipmentOptions(options);
     } catch (error: any) {
       toast({
         title: "Failed to load equipment",
         description: error?.message || "Please try again.",
         variant: "destructive",
       });
+      setEquipmentOptions([]);
     }
   };
 
@@ -543,7 +572,31 @@ const FilterRegisterPage: React.FC = () => {
                                   size="icon"
                                   variant="outline"
                                   className="h-8 w-8 text-emerald-600"
-                                  onClick={() => setPendingApprovalFilter(filter)}
+                                  onClick={() => {
+                                    const currentUserId = user?.id
+                                      ? String(user.id)
+                                      : "";
+                                    const createdById = filter.created_by
+                                      ? String(filter.created_by)
+                                      : "";
+
+                                    if (
+                                      createdById &&
+                                      currentUserId &&
+                                      createdById === currentUserId
+                                    ) {
+                                      toast({
+                                        title:
+                                          "Cannot approve your own registered filter",
+                                        description:
+                                          "Filter Register Done By and Approved By users must be different.",
+                                        variant: "destructive",
+                                      });
+                                      return;
+                                    }
+
+                                    setPendingApprovalFilter(filter);
+                                  }}
                                 >
                                   <CheckCircle2 className="w-4 h-4" />
                                 </Button>

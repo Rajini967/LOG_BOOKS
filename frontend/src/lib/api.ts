@@ -419,6 +419,11 @@ export const equipmentAPI = {
   delete: async (id: string) => {
     await api.delete(`/equipment/${id}/`);
   },
+
+  approve: async (id: string, action: "approve" | "reject") => {
+    const response = await api.post(`/equipment/${id}/approve/`, { action });
+    return response.data;
+  },
 };
 
 // Filter Master API functions

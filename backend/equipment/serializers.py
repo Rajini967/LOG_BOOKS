@@ -34,6 +34,8 @@ class EquipmentCategorySerializer(serializers.ModelSerializer):
 class EquipmentSerializer(serializers.ModelSerializer):
     department_name = serializers.CharField(source="department.name", read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True)
+    created_by_name = serializers.CharField(source="created_by.name", read_only=True, allow_null=True)
+    approved_by_name = serializers.CharField(source="approved_by.name", read_only=True, allow_null=True)
 
     class Meta:
         model = Equipment
@@ -49,10 +51,26 @@ class EquipmentSerializer(serializers.ModelSerializer):
             "site_id",
             "client_id",
             "is_active",
+            "status",
+            "created_by",
+            "created_by_name",
+            "approved_by",
+            "approved_by_name",
+            "approved_at",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "status",
+            "created_by",
+            "created_by_name",
+            "approved_by",
+            "approved_by_name",
+            "approved_at",
+            "created_at",
+            "updated_at",
+        ]
 
     def validate_equipment_number(self, value: str) -> str:
         qs = Equipment.objects.filter(equipment_number=value)
@@ -72,4 +90,14 @@ class EquipmentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"category": "Equipment category is required."})
 
         return super().validate(attrs)
+
+    def create(self, validated_data):
+        """
+        Set created_by from request user when creating new equipment.
+        """
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user and user.is_authenticated:
+            validated_data.setdefault("created_by", user)
+        return super().create(validated_data)
 

@@ -7,7 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { chemicalAssignmentAPI, chemicalStockAPI } from "@/lib/api";
+import {
+  chemicalAssignmentAPI,
+  chemicalStockAPI,
+  equipmentAPI,
+  equipmentCategoryAPI,
+} from "@/lib/api";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -39,6 +44,12 @@ interface AssignmentRow {
   created_by_name?: string | null;
 }
 
+interface EquipmentOption {
+  id: string;
+  equipment_number: string;
+  name: string;
+}
+
 const ChemicalAssignmentPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -66,6 +77,7 @@ const ChemicalAssignmentPage: React.FC = () => {
   const [stockByLocation, setStockByLocation] = useState<any[]>([]);
   const [stockLoading, setStockLoading] = useState(false);
   const [locationsFromStock, setLocationsFromStock] = useState<{ value: string; label: string }[]>([]);
+  const [equipmentOptions, setEquipmentOptions] = useState<EquipmentOption[]>([]);
 
   const loadAssignments = async () => {
     setIsLoading(true);
@@ -82,6 +94,46 @@ const ChemicalAssignmentPage: React.FC = () => {
 
   useEffect(() => {
     void loadAssignments();
+  }, []);
+
+  // Load approved Chemical-category equipments for Equipment dropdown
+  useEffect(() => {
+    (async () => {
+      try {
+        const categories = (await equipmentCategoryAPI.list()) as {
+          id: string;
+          name: string;
+        }[];
+        const chemicalCategory = categories.find((c) => {
+          const name = (c.name || "").toLowerCase().trim();
+          return name === "chemical" || name === "chemicals";
+        });
+
+        if (!chemicalCategory) {
+          setEquipmentOptions([]);
+          return;
+        }
+
+        const list = (await equipmentAPI.list({
+          category: chemicalCategory.id,
+        })) as any[];
+
+        const options: EquipmentOption[] = (list || [])
+          .filter(
+            (e: any) => e?.is_active !== false && e?.status === "approved",
+          )
+          .map((e: any) => ({
+            id: e.id,
+            equipment_number: e.equipment_number,
+            name: e.name || "",
+          }));
+
+        setEquipmentOptions(options);
+      } catch (error) {
+        console.error("Failed to load chemical equipment list:", error);
+        setEquipmentOptions([]);
+      }
+    })();
   }, []);
 
   // Load distinct locations from stock details (only locations that have stock entries)
@@ -317,14 +369,44 @@ const ChemicalAssignmentPage: React.FC = () => {
 
                 <div className="space-y-2">
                   <Label htmlFor="equipment-name">Equipment</Label>
-                  <Input
-                    id="equipment-name"
-                    value={form.equipmentName}
-                    onChange={(e) =>
-                      setForm((prev) => ({ ...prev, equipmentName: e.target.value }))
+                  <Select
+                    value={form.equipmentName || "__none__"}
+                    onValueChange={(v) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        equipmentName: v === "__none__" ? "" : v,
+                      }))
                     }
-                    placeholder="Enter equipment name"
-                  />
+                    disabled={equipmentOptions.length === 0}
+                  >
+                    <SelectTrigger id="equipment-name">
+                      <SelectValue
+                        placeholder={
+                          equipmentOptions.length === 0
+                            ? "No approved Chemical equipment"
+                            : "Select equipment"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Select equipment</SelectItem>
+                      {equipmentOptions.map((eq) => (
+                        <SelectItem
+                          key={eq.id}
+                          value={`${eq.equipment_number} – ${eq.name || eq.equipment_number}`}
+                        >
+                          {eq.equipment_number}
+                          {eq.name ? ` – ${eq.name}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {equipmentOptions.length === 0 && (
+                    <p className="text-xs text-amber-600">
+                      No approved Chemical equipments found. Please add and approve Chemical
+                      equipment in the Equipment List first.
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-2">

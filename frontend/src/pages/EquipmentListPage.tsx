@@ -13,15 +13,34 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, Wrench, Edit, Trash2, Filter as FilterIcon } from "lucide-react";
+import {
+  Plus,
+  Wrench,
+  Edit,
+  Trash2,
+  Filter as FilterIcon,
+  CheckCircle,
+  XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { departmentAPI, equipmentAPI, equipmentCategoryAPI } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface DepartmentOption {
   id: string;
@@ -38,6 +57,7 @@ interface Equipment {
   equipment_number: string;
   name: string;
   capacity?: string | null;
+  created_by?: string | null;
   department: string;
   department_name?: string;
   category: string;
@@ -45,9 +65,11 @@ interface Equipment {
   site_id?: string | null;
   client_id?: string;
   is_active: boolean;
+  status?: "pending" | "approved" | "rejected";
 }
 
 export default function EquipmentListPage() {
+  const { user } = useAuth();
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
   const [categories, setCategories] = useState<CategoryOption[]>([]);
@@ -67,6 +89,14 @@ export default function EquipmentListPage() {
     category: "",
     is_active: true,
   });
+
+  const [confirmAction, setConfirmAction] = useState<{
+    id: string;
+    action: "approve" | "reject";
+  } | null>(null);
+
+  const canApprove =
+    user?.role === "super_admin" || user?.role === "manager";
 
   useEffect(() => {
     const loadLookups = async () => {
@@ -241,6 +271,37 @@ export default function EquipmentListPage() {
     } catch (error: any) {
       console.error("Delete equipment error:", error);
       const message = extractErrorMessage(error, "Failed to delete equipment");
+      toast.error(message);
+    }
+  };
+
+  const handleApproveAction = async (
+    action: "approve" | "reject",
+    id: string,
+  ) => {
+    if (!canApprove) {
+      toast.error(
+        action === "approve"
+          ? "Only Manager / Super Admin can approve equipment."
+          : "Only Manager / Super Admin can reject equipment.",
+      );
+      return;
+    }
+    try {
+      const updated = await equipmentAPI.approve(id, action);
+      setEquipment((prev) =>
+        prev.map((e) => (e.id === id ? updated : e)),
+      );
+      toast.success(
+        action === "approve"
+          ? "Equipment approved successfully."
+          : "Equipment rejected.",
+      );
+    } catch (error: any) {
+      const message =
+        error?.message ||
+        error?.data?.detail ||
+        "Failed to update equipment status";
       toast.error(message);
     }
   };
@@ -556,11 +617,28 @@ export default function EquipmentListPage() {
                         {item.capacity || "—"}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge
-                          variant={item.is_active ? "success" : "secondary"}
-                        >
-                          {item.is_active ? "Active" : "Inactive"}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          <Badge
+                            variant={
+                              item.status === "approved"
+                                ? "success"
+                                : item.status === "rejected"
+                                ? "destructive"
+                                : "pending"
+                            }
+                          >
+                            {item.status
+                              ? item.status.charAt(0).toUpperCase() +
+                                item.status.slice(1)
+                              : "Approved"}
+                          </Badge>
+                          <Badge
+                            variant={item.is_active ? "secondary" : "outline"}
+                            className="w-fit text-[10px]"
+                          >
+                            {item.is_active ? "Active" : "Inactive"}
+                          </Badge>
+                        </div>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
@@ -571,6 +649,67 @@ export default function EquipmentListPage() {
                           >
                             <Edit className="w-4 h-4" />
                           </Button>
+                          {canApprove && (
+                            <>
+                              {(() => {
+                                const isPending =
+                                  !item.status || item.status === "pending";
+                                const canChangeStatus = isPending;
+
+                                const handleClick = (
+                                  action: "approve" | "reject",
+                                ) => {
+                                  if (!canChangeStatus) return;
+
+                                  // If current user is the creator, call API directly.
+                                  if (
+                                    item.created_by &&
+                                    String(item.created_by) ===
+                                      String(user?.id || "")
+                                  ) {
+                                    void handleApproveAction(action, item.id);
+                                    return;
+                                  }
+
+                                  // For a different user, open confirmation popup.
+                                  setConfirmAction({ id: item.id, action });
+                                };
+
+                                return (
+                                  <>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      disabled={!canChangeStatus}
+                                      className={
+                                        !canChangeStatus
+                                          ? "opacity-40 cursor-not-allowed"
+                                          : ""
+                                      }
+                                      onClick={() => handleClick("approve")}
+                                      title="Approve equipment"
+                                    >
+                                      <CheckCircle className="w-4 h-4 text-green-600" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      disabled={!canChangeStatus}
+                                      className={
+                                        !canChangeStatus
+                                          ? "opacity-40 cursor-not-allowed"
+                                          : ""
+                                      }
+                                      onClick={() => handleClick("reject")}
+                                      title="Reject equipment"
+                                    >
+                                      <XCircle className="w-4 h-4 text-red-600" />
+                                    </Button>
+                                  </>
+                                );
+                              })()}
+                            </>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
@@ -588,8 +727,56 @@ export default function EquipmentListPage() {
           </div>
         </div>
       </div>
+      {/* Approval / rejection confirmation for non-creator users */}
+      <AlertDialog
+        open={!!confirmAction}
+        onOpenChange={(open) => {
+          if (!open) setConfirmAction(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirmAction?.action === "reject"
+                ? "Reject equipment"
+                : "Approve equipment"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmAction?.action === "reject"
+                ? "Are you sure you want to mark this equipment as Rejected? The record will stay in the list but with status \"Rejected\"."
+                : "Are you sure you want to approve this equipment record? It will be marked as Approved in the equipment list."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={() => {
+                setConfirmAction(null);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className={
+                confirmAction?.action === "reject"
+                  ? "bg-red-600 hover:bg-red-700 text-white"
+                  : "bg-green-600 hover:bg-green-700 text-white"
+              }
+              onClick={async () => {
+                if (confirmAction) {
+                  await handleApproveAction(
+                    confirmAction.action,
+                    confirmAction.id,
+                  );
+                  setConfirmAction(null);
+                }
+              }}
+            >
+              {confirmAction?.action === "reject" ? "Reject" : "Approve"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
-
 
