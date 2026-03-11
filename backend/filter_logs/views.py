@@ -227,6 +227,11 @@ class FilterLogViewSet(viewsets.ModelViewSet):
         now = timezone.now()
 
         if action_type == 'reject':
+            # Rejector must be different from the operator (Log Book Done By)
+            if log.operator_id and log.operator_id == request.user.id:
+                raise ValidationError(
+                    {'detail': ['Log Book Done By and Rejected By users must be different.']}
+                )
             log.status = 'rejected'
             log.approved_by = request.user
             log.approved_at = now

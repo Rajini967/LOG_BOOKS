@@ -656,6 +656,12 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
         elif action_type == 'reject':
+            # Rejector must be different from the operator (Log Book Done By)
+            if log.operator_id and log.operator_id == request.user.id:
+                return Response(
+                    {'error': 'The log book entry must be rejected by a different user than the operator (Log Book Done By).'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             if log.status not in ('pending', 'draft', 'pending_secondary_approval'):
                 return Response(
                     {'error': 'Only pending, draft, or pending secondary approval entries can be rejected.'},

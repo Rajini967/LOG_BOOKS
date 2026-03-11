@@ -691,28 +691,20 @@ export default function EquipmentListPage() {
                         {item.capacity || "—"}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex flex-col gap-1">
-                          <Badge
-                            variant={
-                              item.status === "approved"
-                                ? "success"
-                                : item.status === "rejected"
-                                ? "destructive"
-                                : "pending"
-                            }
-                          >
-                            {item.status
-                              ? item.status.charAt(0).toUpperCase() +
-                                item.status.slice(1)
-                              : "Approved"}
-                          </Badge>
-                          <Badge
-                            variant={item.is_active ? "secondary" : "outline"}
-                            className="w-fit text-[10px]"
-                          >
-                            {item.is_active ? "Active" : "Inactive"}
-                          </Badge>
-                        </div>
+                        <Badge
+                          variant={
+                            item.status === "approved"
+                              ? "success"
+                              : item.status === "rejected"
+                              ? "destructive"
+                              : "pending"
+                          }
+                        >
+                          {item.status
+                            ? item.status.charAt(0).toUpperCase() +
+                              item.status.slice(1)
+                            : "Approved"}
+                        </Badge>
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">

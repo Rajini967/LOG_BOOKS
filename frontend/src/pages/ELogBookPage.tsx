@@ -1168,6 +1168,17 @@ export default function ELogBookPage() {
   };
 
   const handleApproveClick = (id: string) => {
+    const log = logs.find((l) => l.id === id);
+    if (!log) return;
+
+    // Prevent operator from attempting approval – show same message as backend
+    if (log.operator_id && user?.id && log.operator_id === user.id) {
+      toast.error(
+        'The log book entry must be approved by a different user than the operator (Log Book Done By).',
+      );
+      return;
+    }
+
     setSelectedLogIds([id]);
     setApproveConfirmOpen(true);
   };
@@ -1198,6 +1209,17 @@ export default function ELogBookPage() {
   };
 
   const handleRejectClick = (id: string) => {
+    const log = logs.find((l) => l.id === id);
+    if (!log) return;
+
+    // Prevent operator from attempting rejection – show same message as backend
+    if (log.operator_id && user?.id && log.operator_id === user.id) {
+      toast.error(
+        'The log book entry must be rejected by a different user than the operator (Log Book Done By).',
+      );
+      return;
+    }
+
     setSelectedLogId(id);
     setRejectConfirmOpen(true);
   };

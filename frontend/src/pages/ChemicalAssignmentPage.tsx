@@ -96,7 +96,7 @@ const ChemicalAssignmentPage: React.FC = () => {
     void loadAssignments();
   }, []);
 
-  // Load approved Chemical-category equipments for Equipment dropdown
+  // Load approved, active equipments (excluding chiller/boiler) for Equipment dropdown
   useEffect(() => {
     (async () => {
       try {
@@ -104,24 +104,28 @@ const ChemicalAssignmentPage: React.FC = () => {
           id: string;
           name: string;
         }[];
-        const chemicalCategory = categories.find((c) => {
+        const excludedCategoryIds = new Set<string>();
+        for (const c of categories) {
           const name = (c.name || "").toLowerCase().trim();
-          return name === "chemical" || name === "chemicals";
-        });
-
-        if (!chemicalCategory) {
-          setEquipmentOptions([]);
-          return;
+          if (
+            name === "chiller" ||
+            name === "chillers" ||
+            name === "boiler" ||
+            name === "boilers"
+          ) {
+            excludedCategoryIds.add(c.id);
+          }
         }
 
-        const list = (await equipmentAPI.list({
-          category: chemicalCategory.id,
-        })) as any[];
+        const list = (await equipmentAPI.list()) as any[];
 
         const options: EquipmentOption[] = (list || [])
-          .filter(
-            (e: any) => e?.is_active !== false && e?.status === "approved",
-          )
+          .filter((e: any) => {
+            if (e?.is_active === false) return false;
+            if (e?.status !== "approved") return false;
+            if (e?.category && excludedCategoryIds.has(e.category)) return false;
+            return true;
+          })
           .map((e: any) => ({
             id: e.id,
             equipment_number: e.equipment_number,
