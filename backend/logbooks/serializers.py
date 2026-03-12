@@ -1,3 +1,4 @@
+import json
 from rest_framework import serializers
 from .models import LogbookSchema, LogbookRoleAssignment, LogbookEntry
 from accounts.models import UserRole
@@ -51,18 +52,28 @@ class LogbookSchemaCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         assigned_roles = validated_data.pop('assigned_roles', [])
         request = self.context.get('request')
-        
+        user = request.user if request and getattr(request, "user", None) else None
+
         # created_by is set in perform_create, so don't set it here
         schema = LogbookSchema.objects.create(**validated_data)
-        
+
         # Create role assignments
         for role in assigned_roles:
             LogbookRoleAssignment.objects.create(
                 schema=schema,
                 role=role,
-                assigned_by=request.user if request else None
+                assigned_by=user
             )
-        
+
+        log_limit_change(
+            user=user,
+            object_type="logbook_schema",
+            key=str(schema.id),
+            field_name="schema",
+            old=None,
+            new=schema.name,
+            event_type="config_update",
+        )
         return schema
 
 
@@ -208,11 +219,20 @@ class LogbookSchemaUpdateSerializer(serializers.ModelSerializer):
         return instance
 
 
+def _audit_value(val):
+    """String representation for audit trail (old_value/new_value)."""
+    if val is None:
+        return None
+    if isinstance(val, (dict, list)):
+        return json.dumps(val)
+    return str(val)
+
+
 class LogbookEntrySerializer(serializers.ModelSerializer):
     schema_name = serializers.CharField(source='schema.name', read_only=True)
     operator_name = serializers.CharField(read_only=True)
     approved_by_name = serializers.CharField(source='approved_by.name', read_only=True)
-    
+
     class Meta:
         model = LogbookEntry
         fields = [
@@ -226,4 +246,71 @@ class LogbookEntrySerializer(serializers.ModelSerializer):
             'id', 'operator', 'operator_name', 'approved_by', 'approved_by_name',
             'approved_at', 'timestamp', 'created_at', 'updated_at'
         ]
+
+    def _get_user(self):
+        request = self.context.get("request")
+        return request.user if request and getattr(request, "user", None) else None
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        user = self._get_user()
+        data = instance.data or {}
+        for key, value in data.items():
+            log_limit_change(
+                user=user,
+                object_type="logbook_entry",
+                key=str(instance.id),
+                field_name=key,
+                old=None,
+                new=_audit_value(value),
+                event_type="log_update",
+            )
+        return instance
+
+    def update(self, instance, validated_data):
+        user = self._get_user()
+        old_data = dict(instance.data or {})
+        old_status = getattr(instance, "status", None)
+        old_remarks = getattr(instance, "remarks", None)
+
+        super().update(instance, validated_data)
+
+        if "data" in validated_data:
+            new_data = validated_data["data"] or {}
+            all_keys = sorted(set(old_data.keys()) | set(new_data.keys()))
+            for key in all_keys:
+                old_val = old_data.get(key)
+                new_val = new_data.get(key)
+                if old_val != new_val:
+                    log_limit_change(
+                        user=user,
+                        object_type="logbook_entry",
+                        key=str(instance.id),
+                        field_name=key,
+                        old=_audit_value(old_val),
+                        new=_audit_value(new_val),
+                        event_type="log_update",
+                    )
+
+        if "status" in validated_data and old_status != validated_data["status"]:
+            log_limit_change(
+                user=user,
+                object_type="logbook_entry",
+                key=str(instance.id),
+                field_name="status",
+                old=_audit_value(old_status),
+                new=_audit_value(validated_data["status"]),
+                event_type="log_update",
+            )
+        if "remarks" in validated_data and old_remarks != validated_data["remarks"]:
+            log_limit_change(
+                user=user,
+                object_type="logbook_entry",
+                key=str(instance.id),
+                field_name="remarks",
+                old=_audit_value(old_remarks),
+                new=_audit_value(validated_data["remarks"]),
+                event_type="log_update",
+            )
+        return instance
 

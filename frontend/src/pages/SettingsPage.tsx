@@ -37,11 +37,13 @@ export default function SettingsPage() {
   const { refreshSessionSettings } = useAuth();
   const [sessionTimeoutMinutes, setSessionTimeoutMinutes] = useState<number | ''>('');
   const [logEntryInterval, setLogEntryInterval] = useState<LogEntryIntervalType>('hourly');
+  const [logEntryToleranceMinutes, setLogEntryToleranceMinutes] = useState<number | ''>('');
   const [shiftDurationHours, setShiftDurationHours] = useState<number>(8);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
   const [chillerEquipment, setChillerEquipment] = useState<{ id: string; equipment_number: string; name: string }[]>([]);
   const [chillerLimits, setChillerLimits] = useState<Record<string, {
     daily_power_limit_kw?: number | null;
+    electricity_rate_rs_per_kwh?: number | null;
     daily_water_ct1_liters?: number | null;
     daily_water_ct2_liters?: number | null;
     daily_water_ct3_liters?: number | null;
@@ -81,6 +83,11 @@ export default function SettingsPage() {
         if (data.log_entry_interval === 'hourly' || data.log_entry_interval === 'shift' || data.log_entry_interval === 'daily') {
           setLogEntryInterval(data.log_entry_interval);
         }
+        if (typeof data.log_entry_tolerance_minutes === 'number' && data.log_entry_tolerance_minutes >= 0) {
+          setLogEntryToleranceMinutes(data.log_entry_tolerance_minutes);
+        } else {
+          setLogEntryToleranceMinutes('');
+        }
         if (typeof data.shift_duration_hours === 'number' && data.shift_duration_hours >= 1 && data.shift_duration_hours <= 24) {
           setShiftDurationHours(data.shift_duration_hours);
         }
@@ -115,7 +122,7 @@ export default function SettingsPage() {
         }
         const list = (await equipmentAPI.list({ category: chillerCategoryId })) as any[];
         const chillers = (list || [])
-          .filter((e: any) => e?.is_active !== false)
+          .filter((e: any) => e?.is_active !== false && e?.status === 'approved')
           .map((e: any) => ({ id: e.id, equipment_number: e.equipment_number || '', name: e.name || '' }));
         setChillerEquipment(chillers);
         const limitsByEq: Record<string, any> = {};
@@ -124,6 +131,7 @@ export default function SettingsPage() {
             const limit = await chillerLimitsAPI.get(eq.equipment_number);
             limitsByEq[eq.equipment_number] = {
               daily_power_limit_kw: limit.daily_power_limit_kw ?? null,
+              electricity_rate_rs_per_kwh: limit.electricity_rate_rs_per_kwh ?? null,
               daily_water_ct1_liters: limit.daily_water_ct1_liters ?? null,
               daily_water_ct2_liters: limit.daily_water_ct2_liters ?? null,
               daily_water_ct3_liters: limit.daily_water_ct3_liters ?? null,
@@ -134,6 +142,7 @@ export default function SettingsPage() {
           } catch {
             limitsByEq[eq.equipment_number] = {
               daily_power_limit_kw: null,
+              electricity_rate_rs_per_kwh: null,
               daily_water_ct1_liters: null,
               daily_water_ct2_liters: null,
               daily_water_ct3_liters: null,
@@ -181,7 +190,7 @@ export default function SettingsPage() {
         }
         const list = (await equipmentAPI.list({ category: boilerCategoryId })) as any[];
         const boilers = (list || [])
-          .filter((e: any) => e?.is_active !== false)
+          .filter((e: any) => e?.is_active !== false && e?.status === 'approved')
           .map((e: any) => ({ id: e.id, equipment_number: e.equipment_number || '', name: e.name || '' }));
         setBoilerEquipment(boilers);
         const limitsByEq: Record<string, {
@@ -252,6 +261,7 @@ export default function SettingsPage() {
       const data = chillerLimits[equipmentNumber] ?? {};
       const payload = {
         daily_power_limit_kw: data.daily_power_limit_kw ?? null,
+        electricity_rate_rs_per_kwh: data.electricity_rate_rs_per_kwh ?? null,
         daily_water_ct1_liters: data.daily_water_ct1_liters ?? null,
         daily_water_ct2_liters: data.daily_water_ct2_liters ?? null,
         daily_water_ct3_liters: data.daily_water_ct3_liters ?? null,
@@ -316,6 +326,7 @@ export default function SettingsPage() {
       const payload: {
         auto_logout_minutes?: number;
         log_entry_interval?: LogEntryIntervalType;
+        log_entry_tolerance_minutes?: number;
         shift_duration_hours?: number;
       } = {};
 
@@ -329,6 +340,13 @@ export default function SettingsPage() {
       }
 
       payload.log_entry_interval = logEntryInterval;
+      const tol =
+        logEntryToleranceMinutes === '' ? 0 : Number(logEntryToleranceMinutes);
+      if (!Number.isFinite(tol) || tol < 0) {
+        toast.error('Tolerance must be 0 or greater (minutes).');
+        return;
+      }
+      payload.log_entry_tolerance_minutes = Math.floor(tol);
       if (logEntryInterval === 'shift') {
         if (shiftDurationHours < 1 || shiftDurationHours > 24) {
           toast.error('Shift duration must be between 1 and 24 hours.');
@@ -558,7 +576,7 @@ export default function SettingsPage() {
           {chillerLimitsLoading ? (
             <p className="text-sm text-muted-foreground">Loading chiller equipment…</p>
           ) : chillerEquipment.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No chiller equipment found. Add equipment with category Chiller in Equipment Master.</p>
+            <p className="text-sm text-muted-foreground">No approved chiller equipment found. Add equipment with category Chiller in Equipment Master and approve it to configure daily limits.</p>
           ) : (
             <div className="space-y-4">
               <div className="space-y-2">
@@ -600,6 +618,23 @@ export default function SettingsPage() {
                             setChillerLimits((prev) => ({
                               ...prev,
                               [eq.equipment_number]: { ...(prev[eq.equipment_number] ?? {}), daily_power_limit_kw: v ?? undefined },
+                            }));
+                          }}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Electricity cost (Rs/kWh)</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          step="any"
+                          placeholder="For cost"
+                          value={chillerLimits[eq.equipment_number]?.electricity_rate_rs_per_kwh ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value === '' ? null : Number(e.target.value);
+                            setChillerLimits((prev) => ({
+                              ...prev,
+                              [eq.equipment_number]: { ...(prev[eq.equipment_number] ?? {}), electricity_rate_rs_per_kwh: v ?? undefined },
                             }));
                           }}
                         />
@@ -656,7 +691,7 @@ export default function SettingsPage() {
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-xs">Cooling Tower Pump – Chemical limit (kg)</Label>
+                        <Label className="text-xs">Cooling Tower-1 – Chemical limit (kg)</Label>
                         <Input
                           type="number"
                           min={0}
@@ -736,7 +771,7 @@ export default function SettingsPage() {
           {boilerLimitsLoading ? (
             <p className="text-sm text-muted-foreground">Loading boiler equipment…</p>
           ) : boilerEquipment.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No boiler equipment found. Add equipment with category Boiler in Equipment Master.</p>
+            <p className="text-sm text-muted-foreground">No approved boiler equipment found. Add equipment with category Boiler in Equipment Master and approve it to configure daily limits.</p>
           ) : (
             <div className="space-y-4">
               <div className="space-y-2">
@@ -998,6 +1033,32 @@ export default function SettingsPage() {
                   <SelectItem value="daily">Daily</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Tolerance (minutes)</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  step={1}
+                  className="w-28"
+                  value={logEntryToleranceMinutes}
+                  disabled={isSessionLoading}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '') {
+                      setLogEntryToleranceMinutes('');
+                      return;
+                    }
+                    const n = Number(v);
+                    if (!Number.isNaN(n)) setLogEntryToleranceMinutes(Math.max(0, Math.floor(n)));
+                  }}
+                />
+                <span className="text-sm text-muted-foreground">minutes (± window)</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Allows early/late log entry within ± tolerance from the expected time. Default 0 means exact due time.
+              </p>
             </div>
             {logEntryInterval === 'shift' && (
               <div className="space-y-2">

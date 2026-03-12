@@ -1,0 +1,42 @@
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("filter_logs", "0004_filterlog_tag_info"),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name="filterlog",
+            name="activity_type",
+            field=models.CharField(
+                choices=[("operation", "Operation"), ("maintenance", "Maintenance"), ("shutdown", "Shutdown")],
+                default="operation",
+                help_text="Activity status for this log entry (drives reading applicability).",
+                max_length=16,
+            ),
+        ),
+        migrations.AddField(
+            model_name="filterlog",
+            name="activity_from_date",
+            field=models.DateField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="filterlog",
+            name="activity_to_date",
+            field=models.DateField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="filterlog",
+            name="activity_from_time",
+            field=models.TimeField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name="filterlog",
+            name="activity_to_time",
+            field=models.TimeField(blank=True, null=True),
+        ),
+    ]
+

@@ -159,6 +159,22 @@ class ChemicalPreparation(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
+    ACTIVITY_TYPE_CHOICES = [
+        ("operation", "Operation"),
+        ("maintenance", "Maintenance"),
+        ("shutdown", "Shutdown"),
+    ]
+    activity_type = models.CharField(
+        max_length=16,
+        choices=ACTIVITY_TYPE_CHOICES,
+        default="operation",
+        help_text="Activity status for this log entry (drives reading applicability).",
+    )
+    activity_from_date = models.DateField(blank=True, null=True)
+    activity_to_date = models.DateField(blank=True, null=True)
+    activity_from_time = models.TimeField(blank=True, null=True)
+    activity_to_time = models.TimeField(blank=True, null=True)
+
     # Chemical preparation fields
     equipment_name = models.CharField(max_length=255, blank=True, null=True)
     chemical = models.ForeignKey(

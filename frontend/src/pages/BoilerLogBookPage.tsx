@@ -40,7 +40,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { EntryIntervalBadge } from "@/components/logbook/EntryIntervalBadge";
 import { MissedReadingPopup } from "@/components/logbook/MissedReadingPopup";
-import { getNextDueAndMissed } from "@/lib/missed-reading";
+import { getNextDueAndMissed, type EquipmentMissInfo } from "@/lib/missed-reading";
+import { MaintenanceTimingsSection } from "@/components/logbook/MaintenanceTimingsSection";
+import type { MaintenanceTimingsValue } from "@/types/maintenance-timings";
 
 const boilerLimits = {
   feedWaterTemp: { min: 50, unit: "°C", type: "NLT" as const },
@@ -133,6 +135,13 @@ const BoilerLogBookPage: React.FC = () => {
   const [logs, setLogs] = useState<BoilerLog[]>([]);
   const [showMissedReadingPopup, setShowMissedReadingPopup] = useState(false);
   const [missedReadingNextDue, setMissedReadingNextDue] = useState<Date | null>(null);
+  const [missedEquipments, setMissedEquipments] = useState<EquipmentMissInfo[] | null>(null);
+  const [scheduleStatusRows, setScheduleStatusRows] = useState<any[]>([]);
+  const [scheduleStatusLoading, setScheduleStatusLoading] = useState(false);
+  const [earlyEntryPopup, setEarlyEntryPopup] = useState<{ open: boolean; message: string }>({
+    open: false,
+    message: "",
+  });
   const [filteredLogs, setFilteredLogs] = useState<BoilerLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -152,6 +161,15 @@ const BoilerLogBookPage: React.FC = () => {
   const [equipmentOptions, setEquipmentOptions] = useState<{ id: string; equipment_number: string; name: string }[]>([]);
   const [previousReadingsForEquipment, setPreviousReadingsForEquipment] = useState<BoilerLog[]>([]);
   const [previousReadingsLoading, setPreviousReadingsLoading] = useState(false);
+
+  const [maintenanceTimings, setMaintenanceTimings] = useState<MaintenanceTimingsValue>({
+    activityType: "operation",
+    fromDate: "",
+    toDate: "",
+    fromTime: "",
+    toTime: "",
+  });
+  const isReadingsApplicable = maintenanceTimings.activityType === "operation";
 
   const [formData, setFormData] = useState({
     equipmentId: "",
@@ -391,26 +409,69 @@ const BoilerLogBookPage: React.FC = () => {
     };
   }, [formData.equipmentId]);
 
+  // Load schedule status rows (interval/tolerance/window state)
   useEffect(() => {
-    if (!sessionSettings?.log_entry_interval || logs.length === 0) return;
-    const latest = logs[0];
-    const lastTs = latest?.timestamp
-      ? latest.timestamp instanceof Date
-        ? latest.timestamp
-        : new Date(latest.timestamp)
-      : null;
-    const eq = equipmentOptions.find((e) => e.equipment_number === latest?.equipmentId);
-    const interval = (eq?.log_entry_interval || sessionSettings.log_entry_interval) as "hourly" | "shift" | "daily";
-    const shiftHours = eq?.shift_duration_hours ?? sessionSettings.shift_duration_hours ?? 8;
-    const { nextDue, isMissed } = getNextDueAndMissed(lastTs, interval, shiftHours);
-    if (isMissed && nextDue) {
-      setMissedReadingNextDue(nextDue);
-      setShowMissedReadingPopup(true);
-    } else {
+    let cancelled = false;
+    setScheduleStatusLoading(true);
+    equipmentAPI
+      .scheduledStatus("boiler")
+      .then((res: any) => {
+        if (cancelled) return;
+        setScheduleStatusRows(Array.isArray(res?.rows) ? res.rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setScheduleStatusRows([]);
+      })
+      .finally(() => {
+        if (!cancelled) setScheduleStatusLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [logs.length]);
+
+  // Delay popup based on tolerance-window status
+  useEffect(() => {
+    const delayed = (scheduleStatusRows || []).filter((r: any) => r?.state === "delayed");
+    if (delayed.length === 0) {
+      setMissedEquipments(null);
       setShowMissedReadingPopup(false);
       setMissedReadingNextDue(null);
+      return;
     }
-  }, [logs, sessionSettings, equipmentOptions]);
+    const list: EquipmentMissInfo[] = delayed.map((r: any) => {
+      const equipmentId = String(r.equipment_number || "");
+      const equipmentName = r.name ? String(r.name) : undefined;
+      const lastTimestamp = r.last_entry ? new Date(r.last_entry) : null;
+      const expected = r.expected_entry ? new Date(r.expected_entry) : null;
+      const startWindow = r.start_window ? new Date(r.start_window) : null;
+      const endWindow = r.end_window ? new Date(r.end_window) : null;
+      const tol = typeof r.tolerance_minutes === "number" ? r.tolerance_minutes : undefined;
+      const interval = (r.interval || "hourly") as any;
+      const shiftHours = typeof r.shift_duration_hours === "number" ? r.shift_duration_hours : 8;
+      return {
+        equipmentId,
+        equipmentName,
+        lastTimestamp,
+        nextDue: expected,
+        expectedTime: expected,
+        toleranceMinutes: tol,
+        startWindow,
+        endWindow,
+        isMissed: true,
+        interval,
+        shiftHours,
+      };
+    });
+    setMissedEquipments(list);
+    const firstExpected =
+      list
+        .map((m) => m.nextDue)
+        .filter((d): d is Date => !!d)
+        .sort((a, b) => a.getTime() - b.getTime())[0] || null;
+    setMissedReadingNextDue(firstExpected);
+    setShowMissedReadingPopup(true);
+  }, [scheduleStatusRows]);
 
   const uniqueCheckedBy = useMemo(() => {
     if (!logs.length) return [];
@@ -486,15 +547,25 @@ const BoilerLogBookPage: React.FC = () => {
     [filteredLogs],
   );
   const pendingDraftIds = useMemo(() => pendingDraftLogs.map((log) => log.id), [pendingDraftLogs]);
+  const approvablePendingLogs = useMemo(
+    () =>
+      pendingDraftLogs.filter(
+        (log) =>
+          log.operator_id !== user?.id &&
+          !(log.status === "pending_secondary_approval" && log.approved_by_id === user?.id),
+      ),
+    [pendingDraftLogs, user?.id],
+  );
+  const approvablePendingIds = useMemo(() => approvablePendingLogs.map((log) => log.id), [approvablePendingLogs]);
   const allPendingSelected =
-    pendingDraftIds.length > 0 && pendingDraftIds.every((id) => selectedLogIds.includes(id));
+    approvablePendingIds.length > 0 && approvablePendingIds.every((id) => selectedLogIds.includes(id));
   const handleSelectAllPending = () => {
     if (allPendingSelected) {
-      setSelectedLogIds((prev) => prev.filter((id) => !pendingDraftIds.includes(id)));
+      setSelectedLogIds((prev) => prev.filter((id) => !approvablePendingIds.includes(id)));
     } else {
       setSelectedLogIds((prev) => {
         const next = new Set(prev);
-        pendingDraftIds.forEach((id) => next.add(id));
+        approvablePendingIds.forEach((id) => next.add(id));
         return Array.from(next);
       });
     }
@@ -508,10 +579,116 @@ const BoilerLogBookPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      // Too-early enforcement (UI-side) using tolerance-window status
+      try {
+        const selectedIdentifier = formData.equipmentId || "";
+        if (selectedIdentifier) {
+          const row = (scheduleStatusRows || []).find(
+            (r: any) => String(r?.equipment_number || "") === selectedIdentifier,
+          );
+          if (row?.state === "too_early") {
+            const start = row?.start_window ? new Date(row.start_window) : null;
+            const startStr =
+              start && !Number.isNaN(start.getTime())
+                ? format(start, "HH:mm")
+                : "the allowed window";
+            setEarlyEntryPopup({
+              open: true,
+              message: `Log entry is too early.\nAllowed entry time starts at ${startStr}.`,
+            });
+            return;
+          }
+        }
+      } catch {
+        // ignore; backend will enforce
+      }
+
       if (!formData.equipmentId) {
         toast.error("Please select Equipment ID.");
         return;
       }
+
+      if (!formData.remarks.trim()) {
+        toast.error("Remarks are required.");
+        return;
+      }
+
+      if (!isReadingsApplicable) {
+        const logData: Record<string, unknown> = {
+          equipment_id: formData.equipmentId,
+          activity_type: maintenanceTimings.activityType,
+          activity_from_date: maintenanceTimings.fromDate || undefined,
+          activity_to_date: maintenanceTimings.toDate || undefined,
+          activity_from_time: maintenanceTimings.fromTime || undefined,
+          activity_to_time: maintenanceTimings.toTime || undefined,
+          remarks: formData.remarks || undefined,
+        };
+        const editingBoilerLog = editingLogId ? logs.find((l) => l.id === editingLogId) : null;
+        const canChangeTimestamp =
+          editingBoilerLog &&
+          (editingBoilerLog.status === "rejected" || editingBoilerLog.status === "pending_secondary_approval");
+        if (canChangeTimestamp && formData.date && formData.time) {
+          (logData as Record<string, unknown>).timestamp = new Date(`${formData.date}T${formData.time}`).toISOString();
+        }
+        if (editingLogId && editingBoilerLog) {
+          const isCorrection =
+            (editingBoilerLog.status === "rejected" || editingBoilerLog.status === "pending_secondary_approval") &&
+            user?.role !== "operator";
+          if (isCorrection) {
+            await boilerLogAPI.correct(editingLogId, logData as any);
+            toast.success("Boiler entry corrected as new entry.");
+          } else {
+            await boilerLogAPI.update(editingLogId, logData as any);
+            toast.success("Boiler entry updated successfully.");
+          }
+          setEditingLogId(null);
+        } else {
+          await boilerLogAPI.create(logData as any);
+          toast.success("Boiler entry saved successfully");
+        }
+
+        setFormData({
+          equipmentId: "",
+          feedWaterTemp: "",
+          oilTemp: "",
+          steamTemp: "",
+          steamPressure: "",
+          steamFlowLPH: "",
+          foHsdNgDayTankLevel: "",
+          feedWaterTankLevel: "",
+          foPreHeaterTemp: "",
+          burnerOilPressure: "",
+          burnerHeaterTemp: "",
+          boilerSteamPressure: "",
+          stackTemperature: "",
+          steamPressureAfterPrv: "",
+          feedWaterHardnessPpm: "",
+          feedWaterTdsPpm: "",
+          foHsdNgConsumption: "",
+          mobreyFunctioning: "",
+          manualBlowdownTime: "",
+          dieselStockLiters: "",
+          dieselCostRupees: "",
+          furnaceOilStockLiters: "",
+          furnaceOilCostRupees: "",
+          brigadeStockKg: "",
+          brigadeCostRupees: "",
+          dailyPowerConsumptionKwh: "",
+          dailyWaterConsumptionLiters: "",
+          dailyChemicalConsumptionKg: "",
+          dailyDieselConsumptionLiters: "",
+          dailyFurnaceOilConsumptionLiters: "",
+          dailyBrigadeConsumptionKg: "",
+          steamConsumptionKgHr: "",
+          remarks: "",
+          date: "",
+          time: "",
+        });
+        setIsDialogOpen(false);
+        await refreshLogs();
+        return;
+      }
+
       const numericFields: { key: keyof typeof formData; label: string }[] = [
         { key: "feedWaterTemp", label: "Feed water temp" },
         { key: "oilTemp", label: "Oil temp" },
@@ -533,6 +710,11 @@ const BoilerLogBookPage: React.FC = () => {
 
       const logData: Record<string, unknown> = {
         equipment_id: formData.equipmentId,
+        activity_type: maintenanceTimings.activityType,
+        activity_from_date: maintenanceTimings.fromDate || undefined,
+        activity_to_date: maintenanceTimings.toDate || undefined,
+        activity_from_time: maintenanceTimings.fromTime || undefined,
+        activity_to_time: maintenanceTimings.toTime || undefined,
         feed_water_temp: parseFloat(formData.feedWaterTemp),
         oil_temp: parseFloat(formData.oilTemp),
         steam_temp: parseFloat(formData.steamTemp),
@@ -785,17 +967,39 @@ const BoilerLogBookPage: React.FC = () => {
       <div className="px-4 pt-0">
         <EntryIntervalBadge />
       </div>
+
       {showMissedReadingPopup && missedReadingNextDue && (
         <MissedReadingPopup
           open={showMissedReadingPopup}
           onClose={() => {
             setShowMissedReadingPopup(false);
             setMissedReadingNextDue(null);
+            setMissedEquipments(null);
           }}
           logTypeLabel="Boiler"
           nextDue={missedReadingNextDue}
+          equipmentList={missedEquipments ?? undefined}
         />
       )}
+
+      <AlertDialog
+        open={earlyEntryPopup.open}
+        onOpenChange={(open) => setEarlyEntryPopup((prev) => ({ ...prev, open }))}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Log entry is too early</AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-line">
+              {earlyEntryPopup.message}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setEarlyEntryPopup({ open: false, message: "" })}>
+              OK
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <main className="p-4 space-y-4">
         <div className="flex justify-between items-center">
           <div>
@@ -992,13 +1196,34 @@ const BoilerLogBookPage: React.FC = () => {
                         <SelectTrigger>
                           <SelectValue placeholder="Select equipment" />
                         </SelectTrigger>
-                        <SelectContent className="max-h-60 overflow-y-auto">
-                          {equipmentOptions.map((eq) => (
-                            <SelectItem key={eq.id} value={eq.equipment_number}>
-                              {eq.equipment_number}
-                              {eq.name ? ` – ${eq.name}` : ""}
-                            </SelectItem>
-                          ))}
+                        <SelectContent className="z-[100] min-w-[340px] w-[var(--radix-select-trigger-width)]">
+                          {equipmentOptions.map((eq) => {
+                            const st = (scheduleStatusRows || []).find(
+                              (r: any) => String(r?.equipment_number || "") === eq.equipment_number,
+                            );
+                            const state = String(st?.state || "");
+                            const suffix =
+                              state === "delayed"
+                                ? " (Delayed)"
+                                : state === "near_delay"
+                                ? " (Near delay)"
+                                : state === "too_early"
+                                ? " (Too early)"
+                                : "";
+                            const itemClass =
+                              state === "delayed"
+                                ? "bg-red-50 data-[highlighted]:bg-red-100 data-[state=checked]:bg-red-100"
+                                : state === "near_delay"
+                                ? "bg-yellow-50 data-[highlighted]:bg-yellow-100 data-[state=checked]:bg-yellow-100"
+                                : "data-[highlighted]:bg-muted";
+                            return (
+                              <SelectItem key={eq.id} value={eq.equipment_number} className={itemClass}>
+                                {eq.equipment_number}
+                                {eq.name ? ` – ${eq.name}` : ""}
+                                {suffix}
+                              </SelectItem>
+                            );
+                          })}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1028,6 +1253,8 @@ const BoilerLogBookPage: React.FC = () => {
                     </div>
                   )}
 
+                  <MaintenanceTimingsSection value={maintenanceTimings} onChange={setMaintenanceTimings} />
+
                   {/* Date and Time (editable when correcting rejected or pending-secondary-approval entry) */}
                   {editingLogId && (() => {
                     const editingLog = logs.find((l) => l.id === editingLogId);
@@ -1047,6 +1274,7 @@ const BoilerLogBookPage: React.FC = () => {
                   })()}
 
                   {/* Hourly Parameters */}
+                  <fieldset disabled={!isReadingsApplicable} className={cn(!isReadingsApplicable && "opacity-60")}>
                   <div className="space-y-3">
                     <h3 className="text-sm font-semibold border-b pb-2">Hourly Parameters</h3>
                     <div className="grid grid-cols-2 gap-4">
@@ -1305,6 +1533,7 @@ const BoilerLogBookPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                  </fieldset>
 
                   {/* Remarks */}
                   <div className="space-y-3 pt-4 mt-2 border-t">
@@ -1358,7 +1587,7 @@ const BoilerLogBookPage: React.FC = () => {
               <thead className="bg-muted/50">
                 <tr>
                   <th className="px-4 py-2 text-left font-semibold w-12">
-                    {pendingDraftIds.length > 0 && user?.role !== "operator" && (
+                    {approvablePendingIds.length > 0 && user?.role !== "operator" && (
                       <Checkbox
                         checked={allPendingSelected}
                         onCheckedChange={handleSelectAllPending}
@@ -1391,7 +1620,10 @@ const BoilerLogBookPage: React.FC = () => {
                 {filteredLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3 align-middle">
-                      {(log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval") && user?.role !== "operator" ? (
+                      {(log.status === "pending" || log.status === "draft" || log.status === "pending_secondary_approval") &&
+                      user?.role !== "operator" &&
+                      log.operator_id !== user?.id &&
+                      !(log.status === "pending_secondary_approval" && log.approved_by_id === user?.id) ? (
                         <Checkbox
                           checked={selectedLogIds.includes(log.id)}
                           onCheckedChange={() => handleToggleLogSelection(log.id)}
@@ -1586,15 +1818,17 @@ const BoilerLogBookPage: React.FC = () => {
                             </Button>
                           </>
                         )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                          title="Delete entry"
-                          onClick={() => handleDelete(log.id)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {user?.role === "super_admin" && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                            title="Delete entry"
+                            onClick={() => handleDelete(log.id)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -1786,7 +2020,13 @@ const BoilerLogBookPage: React.FC = () => {
                     toast.error("Comment is required for approval");
                     return;
                   }
-                  const ids = [...selectedLogIds];
+                  const ids = [...selectedLogIds].filter((id) => {
+                    const log = logs.find((l) => l.id === id);
+                    if (!log) return false;
+                    if (log.operator_id === user?.id) return false;
+                    if (log.status === "pending_secondary_approval" && log.approved_by_id === user?.id) return false;
+                    return true;
+                  });
                   if (ids.length === 0) return;
                   if (ids.length === 1) {
                     handleApprove(ids[0], comment);

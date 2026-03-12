@@ -18,14 +18,30 @@ class ChillerLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     equipment_id = models.CharField(max_length=100, db_index=True)
     site_id = models.CharField(max_length=100, blank=True, null=True)
+
+    ACTIVITY_TYPE_CHOICES = [
+        ("operation", "Operation"),
+        ("maintenance", "Maintenance"),
+        ("shutdown", "Shutdown"),
+    ]
+    activity_type = models.CharField(
+        max_length=16,
+        choices=ACTIVITY_TYPE_CHOICES,
+        default="operation",
+        help_text="Activity status for this log entry (drives reading applicability).",
+    )
+    activity_from_date = models.DateField(blank=True, null=True)
+    activity_to_date = models.DateField(blank=True, null=True)
+    activity_from_time = models.TimeField(blank=True, null=True)
+    activity_to_time = models.TimeField(blank=True, null=True)
     
     # Chiller specific readings - existing summary parameters
-    chiller_supply_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="Chiller supply temperature (°C)")
-    chiller_return_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="Chiller return temperature (°C)")
-    cooling_tower_supply_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="Cooling tower supply temperature (°C)")
-    cooling_tower_return_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="Cooling tower return temperature (°C)")
-    ct_differential_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="CT differential temperature (°C)")
-    chiller_water_inlet_pressure = models.FloatField(validators=[MinValueValidator(0)], help_text="Chiller water inlet pressure (bar)")
+    chiller_supply_temp = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Chiller supply temperature (°C)")
+    chiller_return_temp = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Chiller return temperature (°C)")
+    cooling_tower_supply_temp = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Cooling tower supply temperature (°C)")
+    cooling_tower_return_temp = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Cooling tower return temperature (°C)")
+    ct_differential_temp = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="CT differential temperature (°C)")
+    chiller_water_inlet_pressure = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Chiller water inlet pressure (bar)")
     chiller_makeup_water_flow = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Chiller makeup water flow (LPH)")
 
     # Detailed readings from physical sheet
@@ -124,7 +140,7 @@ class ChillerLog(models.Model):
         max_length=50,
         blank=True,
         null=True,
-        help_text="Cooling tower pump 1/2 status (On/Off)"
+        help_text="Cooling tower-1 1/2 status (On/Off)"
     )
     chilled_water_pump_status = models.CharField(
         max_length=50,
@@ -170,18 +186,18 @@ class ChillerLog(models.Model):
         help_text="Cooling tower 3 daily water consumption (liters)"
     )
     # Cooling tower chemicals table - per equipment column
-    # Column 1 - Cooling Tower Pump
+    # Column 1 - Cooling Tower-1
     cooling_tower_chemical_name = models.CharField(
         max_length=100,
         blank=True,
         null=True,
-        help_text="Cooling tower pump chemical name"
+        help_text="Cooling tower-1 chemical name"
     )
     cooling_tower_chemical_qty_per_day = models.FloatField(
         validators=[MinValueValidator(0)],
         blank=True,
         null=True,
-        help_text="Cooling tower pump chemical quantity added per day (kg)"
+        help_text="Cooling tower-1 chemical quantity added per day (kg)"
     )
     # Column 2 - Chilled Water Pump
     chilled_water_pump_chemical_name = models.CharField(
@@ -280,7 +296,7 @@ class ChillerEquipmentStatusAudit(models.Model):
     """Audit trail for pump/fan status changes on chiller logs."""
 
     FIELD_CHOICES = [
-        ('cooling_tower_pump_status', 'Cooling Tower Pump 1/2'),
+        ('cooling_tower_pump_status', 'Cooling Tower-1 1/2'),
         ('chilled_water_pump_status', 'Chilled Water Pump 1/2'),
         ('cooling_tower_fan_status', 'Cooling Tower Fan 1/2/3'),
     ]
@@ -331,6 +347,12 @@ class ChillerEquipmentLimit(models.Model):
         blank=True,
         null=True,
         help_text="Daily power consumption limit (kW)"
+    )
+    electricity_rate_rs_per_kwh = models.FloatField(
+        validators=[MinValueValidator(0)],
+        blank=True,
+        null=True,
+        help_text="Electricity rate (Rs/kWh) for cost calculation",
     )
     # Water category - daily limits in liters per cooling tower
     daily_water_ct1_liters = models.FloatField(

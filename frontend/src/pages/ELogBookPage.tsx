@@ -42,11 +42,13 @@ import { LogbookSchema } from '@/types/logbook-config';
 import { FieldWithValidation } from '@/components/logbook/FieldWithValidation';
 import { EntryIntervalBadge } from '@/components/logbook/EntryIntervalBadge';
 import { MissedReadingPopup } from '@/components/logbook/MissedReadingPopup';
+import { MaintenanceTimingsSection } from "@/components/logbook/MaintenanceTimingsSection";
 import {
   getNextDueAndMissed,
   computeMissedByEquipment,
   type EquipmentMissInfo,
 } from '@/lib/missed-reading';
+import type { MaintenanceTimingsValue } from "@/types/maintenance-timings";
 
 interface ELogBook {
   id: string;
@@ -280,6 +282,13 @@ export default function ELogBookPage() {
     boiler: [],
     compressor: [],
   });
+  const [maintenanceTimings, setMaintenanceTimings] = useState<MaintenanceTimingsValue>({
+    activityType: "operation",
+    fromDate: "",
+    toDate: "",
+    fromTime: "",
+    toTime: "",
+  });
   const [formData, setFormData] = useState({
     equipmentType: 'chiller' as 'chiller' | 'boiler' | 'compressor' | 'chemical',
     equipmentId: '',
@@ -352,6 +361,7 @@ export default function ELogBookPage() {
     date: '',
     time: '',
   });
+  const isReadingsApplicable = maintenanceTimings.activityType === "operation";
   
   // Whether the current entry is the first chiller reading of the day for the current operator
   const todayKey =
@@ -371,6 +381,22 @@ export default function ELogBookPage() {
   const [showMissedReadingPopup, setShowMissedReadingPopup] = useState(false);
   const [missedReadingNextDue, setMissedReadingNextDue] = useState<Date | null>(null);
   const [missedEquipments, setMissedEquipments] = useState<EquipmentMissInfo[] | null>(null);
+  const [scheduleStatusRows, setScheduleStatusRows] = useState<any[]>([]);
+  const [scheduleStatusLoading, setScheduleStatusLoading] = useState(false);
+  const delayedEquipmentIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const r of scheduleStatusRows || []) {
+      if (r?.state === 'delayed') {
+        const id = String(r?.equipment_number || r?.filter_id || r?.equipmentId || '');
+        if (id) ids.add(id);
+      }
+    }
+    return ids;
+  }, [scheduleStatusRows]);
+  const [earlyEntryPopup, setEarlyEntryPopup] = useState<{
+    open: boolean;
+    message: string;
+  }>({ open: false, message: "" });
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [approvalComment, setApprovalComment] = useState('');
@@ -494,6 +520,36 @@ export default function ELogBookPage() {
     }
   }, [formData.equipmentType, logbookSchemas]);
 
+  // Load schedule status rows (interval/tolerance/window state) for the current log type
+  useEffect(() => {
+    const t = (formData.equipmentType || '').toString().toLowerCase();
+    if (t.startsWith('custom_')) {
+      setScheduleStatusRows([]);
+      return;
+    }
+    if (t !== 'chiller' && t !== 'boiler' && t !== 'chemical' && t !== 'filter') {
+      setScheduleStatusRows([]);
+      return;
+    }
+    let cancelled = false;
+    setScheduleStatusLoading(true);
+    equipmentAPI
+      .scheduledStatus(t as any)
+      .then((res: any) => {
+        if (cancelled) return;
+        setScheduleStatusRows(Array.isArray(res?.rows) ? res.rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setScheduleStatusRows([]);
+      })
+      .finally(() => {
+        if (!cancelled) setScheduleStatusLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.equipmentType]);
+
   // After equipment selection, fetch previous readings with entered-by for that equipment (chiller/boiler/compressor)
   useEffect(() => {
     const eqId = formData.equipmentId;
@@ -554,60 +610,58 @@ export default function ELogBookPage() {
     };
   }, [formData.equipmentId, formData.equipmentType]);
 
-  // Missed scheduled reading popup: when logs and session settings are ready, check if next due has passed (equipment-wise)
+  // Equipment-wise delay popup based on tolerance-window status API
   useEffect(() => {
-    if (!sessionSettings?.log_entry_interval || logs.length === 0) return;
-    const chillerOptions = equipmentByType.chiller ?? [];
-    const metaByNumber = new Map<
-      string,
-      { log_entry_interval?: string | null; shift_duration_hours?: number | null }
-    >();
-    for (const e of chillerOptions) {
-      metaByNumber.set(e.equipment_number, {
-        log_entry_interval: e.log_entry_interval ?? null,
-        shift_duration_hours: e.shift_duration_hours ?? null,
-      });
-    }
-    const defaultInterval = sessionSettings.log_entry_interval as 'hourly' | 'shift' | 'daily';
-    const defaultShift = sessionSettings.shift_duration_hours ?? 8;
-
-    const resolveInterval = (equipmentId?: string): 'hourly' | 'shift' | 'daily' => {
-      const meta = equipmentId ? metaByNumber.get(equipmentId) : undefined;
-      return (meta?.log_entry_interval as 'hourly' | 'shift' | 'daily') || defaultInterval || 'daily';
-    };
-    const resolveShift = (equipmentId?: string): number => {
-      const meta = equipmentId ? metaByNumber.get(equipmentId) : undefined;
-      return meta?.shift_duration_hours ?? defaultShift;
-    };
-
-    const perEquipment = computeMissedByEquipment(
-      logs.map((l) => ({
-        equipment_id: l.equipmentId,
-        timestamp: l.timestamp,
-      })),
-      {
-        resolveInterval: (eqId) => resolveInterval(eqId),
-        resolveShiftHours: (eqId) => resolveShift(eqId),
-      },
-    );
-
-    const missedOnly = perEquipment.filter((m) => m.isMissed);
-    if (missedOnly.length > 0) {
-      setMissedEquipments(missedOnly);
-      // Use the earliest missed nextDue for the legacy description
-      const firstNext =
-        missedOnly
-          .map((m) => m.nextDue)
-          .filter((d): d is Date => !!d)
-          .sort((a, b) => a.getTime() - b.getTime())[0] || null;
-      setMissedReadingNextDue(firstNext);
-      setShowMissedReadingPopup(true);
-    } else {
+    const t = (formData.equipmentType || '').toString().toLowerCase();
+    if (t !== 'chiller' && t !== 'boiler' && t !== 'chemical' && t !== 'filter') {
       setMissedEquipments(null);
       setShowMissedReadingPopup(false);
       setMissedReadingNextDue(null);
+      return;
     }
-  }, [logs, sessionSettings, equipmentByType]);
+
+    const delayed = (scheduleStatusRows || []).filter((r: any) => r?.state === 'delayed');
+    if (delayed.length === 0) {
+      setMissedEquipments(null);
+      setShowMissedReadingPopup(false);
+      setMissedReadingNextDue(null);
+      return;
+    }
+
+    const list: EquipmentMissInfo[] = delayed.map((r: any) => {
+      const equipmentId = String(r.equipment_number || r.filter_id || r.equipmentId || '');
+      const equipmentName = r.name ? String(r.name) : undefined;
+      const lastTimestamp = r.last_entry ? new Date(r.last_entry) : null;
+      const expected = r.expected_entry ? new Date(r.expected_entry) : null;
+      const startWindow = r.start_window ? new Date(r.start_window) : null;
+      const endWindow = r.end_window ? new Date(r.end_window) : null;
+      const tol = typeof r.tolerance_minutes === 'number' ? r.tolerance_minutes : undefined;
+      const interval = (r.interval || 'hourly') as any;
+      const shiftHours = typeof r.shift_duration_hours === 'number' ? r.shift_duration_hours : 8;
+      return {
+        equipmentId,
+        equipmentName,
+        lastTimestamp,
+        nextDue: expected,
+        expectedTime: expected,
+        toleranceMinutes: tol,
+        startWindow,
+        endWindow,
+        isMissed: true,
+        interval,
+        shiftHours,
+      };
+    });
+
+    setMissedEquipments(list);
+    const firstExpected =
+      list
+        .map((m) => m.nextDue)
+        .filter((d): d is Date => !!d)
+        .sort((a, b) => a.getTime() - b.getTime())[0] || null;
+    setMissedReadingNextDue(firstExpected);
+    setShowMissedReadingPopup(true);
+  }, [scheduleStatusRows, formData.equipmentType]);
 
   // Refresh logs from API
   const refreshLogs = async () => {
@@ -808,15 +862,25 @@ export default function ELogBookPage() {
     [filteredLogs],
   );
   const pendingDraftIds = useMemo(() => pendingDraftLogs.map((log) => log.id), [pendingDraftLogs]);
+  const approvablePendingLogs = useMemo(
+    () =>
+      pendingDraftLogs.filter(
+        (log) =>
+          log.operator_id !== user?.id &&
+          !(log.status === 'pending_secondary_approval' && log.approved_by_id === user?.id),
+      ),
+    [pendingDraftLogs, user?.id],
+  );
+  const approvablePendingIds = useMemo(() => approvablePendingLogs.map((log) => log.id), [approvablePendingLogs]);
   const allPendingSelected =
-    pendingDraftIds.length > 0 && pendingDraftIds.every((id) => selectedLogIds.includes(id));
+    approvablePendingIds.length > 0 && approvablePendingIds.every((id) => selectedLogIds.includes(id));
   const handleSelectAllPending = () => {
     if (allPendingSelected) {
-      setSelectedLogIds((prev) => prev.filter((id) => !pendingDraftIds.includes(id)));
+      setSelectedLogIds((prev) => prev.filter((id) => !approvablePendingIds.includes(id)));
     } else {
       setSelectedLogIds((prev) => {
         const next = new Set(prev);
-        pendingDraftIds.forEach((id) => next.add(id));
+        approvablePendingIds.forEach((id) => next.add(id));
         return Array.from(next);
       });
     }
@@ -827,6 +891,32 @@ export default function ELogBookPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Too-early enforcement (UI-side) using tolerance-window status
+    try {
+      const t = (formData.equipmentType || '').toString().toLowerCase();
+      const selectedIdentifier =
+        t === 'chemical'
+          ? ((formData.equipmentName || '').split(' – ')[0]?.trim() || formData.equipmentName || '')
+          : (formData.equipmentId || '');
+      if ((t === 'chiller' || t === 'boiler' || t === 'chemical' || t === 'filter') && selectedIdentifier) {
+        const row = (scheduleStatusRows || []).find((r: any) => {
+          const id = String(r?.equipment_number || r?.filter_id || '');
+          return id === selectedIdentifier;
+        });
+        if (row?.state === 'too_early') {
+          const start = row?.start_window ? new Date(row.start_window) : null;
+          const startStr = start && !Number.isNaN(start.getTime()) ? format(start, 'HH:mm') : 'the allowed window';
+          setEarlyEntryPopup({
+            open: true,
+            message: `Log entry is too early.\nAllowed entry time starts at ${startStr}.`,
+          });
+          return;
+        }
+      }
+    } catch {
+      // Ignore UI-side schedule validation errors; backend will enforce
+    }
     
     // Validate custom logbook fields if selected
     if (selectedSchema) {
@@ -838,12 +928,17 @@ export default function ELogBookPage() {
         }
       }
     }
+
+    if (!formData.remarks.trim()) {
+      toast.error('Remarks are required.');
+      return;
+    }
     
     try {
       // Chiller page handles only chiller entries
       if (formData.equipmentType === 'chiller') {
         // Validate all chiller fields with clear messages before saving
-        if (!validateChillerForm()) {
+        if (isReadingsApplicable && !validateChillerForm()) {
           return;
         }
         const now = new Date();
@@ -864,12 +959,12 @@ export default function ELogBookPage() {
           if (initialPumps) {
             if (initialPumps.p1 !== formData.coolingTowerPump1) {
               changes.push(
-                `Cooling Tower Pump 1 changed from ${initialPumps.p1} to ${formData.coolingTowerPump1}`,
+                `Cooling Tower-1 changed from ${initialPumps.p1} to ${formData.coolingTowerPump1}`,
               );
             }
             if (initialPumps.p2 !== formData.coolingTowerPump2) {
               changes.push(
-                `Cooling Tower Pump 2 changed from ${initialPumps.p2} to ${formData.coolingTowerPump2}`,
+                `Cooling Tower-2 changed from ${initialPumps.p2} to ${formData.coolingTowerPump2}`,
               );
             }
           }
@@ -928,60 +1023,17 @@ export default function ELogBookPage() {
           formData.coolingTowerFan3,
         );
 
-        const logData = {
+        const logData: Record<string, unknown> = {
           equipment_id: formData.equipmentId,
-          chiller_supply_temp: parseFloat(formData.chillerSupplyTemp),
-          chiller_return_temp: parseFloat(formData.chillerReturnTemp),
-          cooling_tower_supply_temp: parseFloat(formData.coolingTowerSupplyTemp),
-          cooling_tower_return_temp: parseFloat(formData.coolingTowerReturnTemp),
-          ct_differential_temp: parseFloat(formData.ctDifferentialTemp),
-          chiller_water_inlet_pressure: parseFloat(formData.chillerWaterInletPressure),
-          chiller_makeup_water_flow: formData.chillerMakeupWaterFlow ? parseFloat(formData.chillerMakeupWaterFlow) : undefined,
-          daily_water_consumption_ct1_liters: formData.dailyWaterCt1Liters ? parseFloat(formData.dailyWaterCt1Liters) : undefined,
-          daily_water_consumption_ct2_liters: formData.dailyWaterCt2Liters ? parseFloat(formData.dailyWaterCt2Liters) : undefined,
-          daily_water_consumption_ct3_liters: formData.dailyWaterCt3Liters ? parseFloat(formData.dailyWaterCt3Liters) : undefined,
-          evap_water_inlet_pressure: formData.evapWaterInletPressure
-            ? parseFloat(formData.evapWaterInletPressure)
-            : undefined,
-          evap_water_outlet_pressure: formData.evapWaterOutletPressure
-            ? parseFloat(formData.evapWaterOutletPressure)
-            : undefined,
-          evap_entering_water_temp: formData.evapEnteringWaterTemp
-            ? parseFloat(formData.evapEnteringWaterTemp)
-            : undefined,
-          evap_leaving_water_temp: formData.evapLeavingWaterTemp
-            ? parseFloat(formData.evapLeavingWaterTemp)
-            : undefined,
-          evap_approach_temp: formData.evapApproachTemp
-            ? parseFloat(formData.evapApproachTemp)
-            : undefined,
-          cond_water_inlet_pressure: formData.condWaterInletPressure
-            ? parseFloat(formData.condWaterInletPressure)
-            : undefined,
-          cond_water_outlet_pressure: formData.condWaterOutletPressure
-            ? parseFloat(formData.condWaterOutletPressure)
-            : undefined,
-          cond_entering_water_temp: formData.condEnteringWaterTemp
-            ? parseFloat(formData.condEnteringWaterTemp)
-            : undefined,
-          cond_leaving_water_temp: formData.condLeavingWaterTemp
-            ? parseFloat(formData.condLeavingWaterTemp)
-            : undefined,
-          cond_approach_temp: formData.condApproachTemp
-            ? parseFloat(formData.condApproachTemp)
-            : undefined,
-          chiller_control_signal: formData.chillerControlSignal
-            ? parseFloat(formData.chillerControlSignal)
-            : undefined,
-          avg_motor_current: formData.avgMotorCurrent
-            ? parseFloat(formData.avgMotorCurrent)
-            : undefined,
-          compressor_running_time_min: formData.compressorRunningTimeMin
-            ? parseFloat(formData.compressorRunningTimeMin)
-            : undefined,
-          starter_energy_kwh: formData.starterEnergyKwh
-            ? parseFloat(formData.starterEnergyKwh)
-            : undefined,
+          activity_type: maintenanceTimings.activityType,
+          activity_from_date: maintenanceTimings.fromDate || undefined,
+          activity_to_date: maintenanceTimings.toDate || undefined,
+          activity_from_time: maintenanceTimings.fromTime || undefined,
+          activity_to_time: maintenanceTimings.toTime || undefined,
+          recording_frequency: formData.recordingFrequency || undefined,
+          operator_sign: formData.operatorSign || undefined,
+          verified_by: formData.verifiedBy || undefined,
+          remarks: formData.remarks || undefined,
           cooling_tower_pump_status: coolingTowerPumpStatus || undefined,
           chilled_water_pump_status: chilledWaterPumpStatus || undefined,
           cooling_tower_fan_status: coolingTowerFanStatus || undefined,
@@ -1001,11 +1053,35 @@ export default function ELogBookPage() {
           cooling_tower_fan_chemical_qty_kg: formData.coolingTowerFanChemicalQtyKg
             ? parseFloat(formData.coolingTowerFanChemicalQtyKg)
             : undefined,
-          recording_frequency: formData.recordingFrequency || undefined,
-          operator_sign: formData.operatorSign || undefined,
-          verified_by: formData.verifiedBy || undefined,
-          remarks: formData.remarks || undefined,
         };
+        if (isReadingsApplicable) {
+          Object.assign(logData, {
+            chiller_supply_temp: parseFloat(formData.chillerSupplyTemp),
+            chiller_return_temp: parseFloat(formData.chillerReturnTemp),
+            cooling_tower_supply_temp: parseFloat(formData.coolingTowerSupplyTemp),
+            cooling_tower_return_temp: parseFloat(formData.coolingTowerReturnTemp),
+            ct_differential_temp: parseFloat(formData.ctDifferentialTemp),
+            chiller_water_inlet_pressure: parseFloat(formData.chillerWaterInletPressure),
+            chiller_makeup_water_flow: formData.chillerMakeupWaterFlow ? parseFloat(formData.chillerMakeupWaterFlow) : undefined,
+            daily_water_consumption_ct1_liters: formData.dailyWaterCt1Liters ? parseFloat(formData.dailyWaterCt1Liters) : undefined,
+            daily_water_consumption_ct2_liters: formData.dailyWaterCt2Liters ? parseFloat(formData.dailyWaterCt2Liters) : undefined,
+            daily_water_consumption_ct3_liters: formData.dailyWaterCt3Liters ? parseFloat(formData.dailyWaterCt3Liters) : undefined,
+            evap_water_inlet_pressure: formData.evapWaterInletPressure ? parseFloat(formData.evapWaterInletPressure) : undefined,
+            evap_water_outlet_pressure: formData.evapWaterOutletPressure ? parseFloat(formData.evapWaterOutletPressure) : undefined,
+            evap_entering_water_temp: formData.evapEnteringWaterTemp ? parseFloat(formData.evapEnteringWaterTemp) : undefined,
+            evap_leaving_water_temp: formData.evapLeavingWaterTemp ? parseFloat(formData.evapLeavingWaterTemp) : undefined,
+            evap_approach_temp: formData.evapApproachTemp ? parseFloat(formData.evapApproachTemp) : undefined,
+            cond_water_inlet_pressure: formData.condWaterInletPressure ? parseFloat(formData.condWaterInletPressure) : undefined,
+            cond_water_outlet_pressure: formData.condWaterOutletPressure ? parseFloat(formData.condWaterOutletPressure) : undefined,
+            cond_entering_water_temp: formData.condEnteringWaterTemp ? parseFloat(formData.condEnteringWaterTemp) : undefined,
+            cond_leaving_water_temp: formData.condLeavingWaterTemp ? parseFloat(formData.condLeavingWaterTemp) : undefined,
+            cond_approach_temp: formData.condApproachTemp ? parseFloat(formData.condApproachTemp) : undefined,
+            chiller_control_signal: formData.chillerControlSignal ? parseFloat(formData.chillerControlSignal) : undefined,
+            avg_motor_current: formData.avgMotorCurrent ? parseFloat(formData.avgMotorCurrent) : undefined,
+            compressor_running_time_min: formData.compressorRunningTimeMin ? parseFloat(formData.compressorRunningTimeMin) : undefined,
+            starter_energy_kwh: formData.starterEnergyKwh ? parseFloat(formData.starterEnergyKwh) : undefined,
+          });
+        }
         const editingChillerLog = editingLogId ? logs.find((l) => l.id === editingLogId) : null;
         const canChangeTimestamp =
           editingChillerLog &&
@@ -1025,37 +1101,55 @@ export default function ELogBookPage() {
             toast.success('Chiller entry updated successfully');
           }
         } else if (!editingLogId) {
-          await chillerLogAPI.create(logData);
+          await chillerLogAPI.create(logData as any);
           toast.success('Chiller entry saved successfully');
         }
       }
       // Handle boiler entries
       else if (formData.equipmentType === 'boiler') {
-        const logData = {
+        const logData: Record<string, unknown> = {
           equipment_id: formData.equipmentId,
-          feed_water_temp: parseFloat(formData.feedWaterTemp),
-          oil_temp: parseFloat(formData.oilTemp),
-          steam_temp: parseFloat(formData.steamTemp),
-          steam_pressure: parseFloat(formData.steamPressure),
-          steam_flow_lph: formData.steamFlowLPH ? parseFloat(formData.steamFlowLPH) : undefined,
+          activity_type: maintenanceTimings.activityType,
+          activity_from_date: maintenanceTimings.fromDate || undefined,
+          activity_to_date: maintenanceTimings.toDate || undefined,
+          activity_from_time: maintenanceTimings.fromTime || undefined,
+          activity_to_time: maintenanceTimings.toTime || undefined,
           remarks: formData.remarks || undefined,
         };
+        if (isReadingsApplicable) {
+          Object.assign(logData, {
+            feed_water_temp: parseFloat(formData.feedWaterTemp),
+            oil_temp: parseFloat(formData.oilTemp),
+            steam_temp: parseFloat(formData.steamTemp),
+            steam_pressure: parseFloat(formData.steamPressure),
+            steam_flow_lph: formData.steamFlowLPH ? parseFloat(formData.steamFlowLPH) : undefined,
+          });
+        }
         
-        await boilerLogAPI.create(logData);
+        await boilerLogAPI.create(logData as any);
         toast.success('Boiler entry saved successfully');
       }
       // Handle compressor entries
       else if (formData.equipmentType === 'compressor') {
-        const logData = {
+        const logData: Record<string, unknown> = {
           equipment_id: formData.equipmentId,
-          compressor_supply_temp: parseFloat(formData.compressorSupplyTemp),
-          compressor_return_temp: parseFloat(formData.compressorReturnTemp),
-          compressor_pressure: parseFloat(formData.compressorPressure),
-          compressor_flow: formData.compressorFlow ? parseFloat(formData.compressorFlow) : undefined,
+          activity_type: maintenanceTimings.activityType,
+          activity_from_date: maintenanceTimings.fromDate || undefined,
+          activity_to_date: maintenanceTimings.toDate || undefined,
+          activity_from_time: maintenanceTimings.fromTime || undefined,
+          activity_to_time: maintenanceTimings.toTime || undefined,
           remarks: formData.remarks || undefined,
         };
+        if (isReadingsApplicable) {
+          Object.assign(logData, {
+            compressor_supply_temp: parseFloat(formData.compressorSupplyTemp),
+            compressor_return_temp: parseFloat(formData.compressorReturnTemp),
+            compressor_pressure: parseFloat(formData.compressorPressure),
+            compressor_flow: formData.compressorFlow ? parseFloat(formData.compressorFlow) : undefined,
+          });
+        }
         
-        await compressorLogAPI.create(logData);
+        await compressorLogAPI.create(logData as any);
         toast.success('Compressor entry saved successfully');
       }
       
@@ -1449,7 +1543,7 @@ export default function ELogBookPage() {
     const optionalNumeric: { key: string; label: string }[] = [
       { key: 'chillerMakeupWaterFlow', label: 'Chiller make up water flow' },
       { key: 'coolingTowerBlowdownTimeMin', label: 'Cooling tower blow down time (minutes)' },
-      { key: 'coolingTowerChemicalQtyPerDay', label: 'Cooling tower pump chemical quantity (Kg)' },
+      { key: 'coolingTowerChemicalQtyPerDay', label: 'Cooling tower-1 chemical quantity (Kg)' },
       { key: 'chilledWaterPumpChemicalQtyKg', label: 'Chilled water pump chemical quantity (Kg)' },
       { key: 'coolingTowerFanChemicalQtyKg', label: 'Cooling tower fan chemical quantity (Kg)' },
     ];
@@ -1507,11 +1601,30 @@ export default function ELogBookPage() {
         <MissedReadingPopup
           open={showMissedReadingPopup}
           onClose={() => { setShowMissedReadingPopup(false); setMissedReadingNextDue(null); setMissedEquipments(null); }}
-          logTypeLabel="Chiller"
+          logTypeLabel={(formData.equipmentType || 'Equipment').toString().replace(/^./, (c) => c.toUpperCase())}
           nextDue={missedReadingNextDue ?? undefined}
           equipmentList={missedEquipments ?? undefined}
         />
       )}
+
+      <AlertDialog
+        open={earlyEntryPopup.open}
+        onOpenChange={(open) => setEarlyEntryPopup((prev) => ({ ...prev, open }))}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Log entry is too early</AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-line">
+              {earlyEntryPopup.message}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setEarlyEntryPopup({ open: false, message: '' })}>
+              OK
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="p-6 space-y-6">
         {/* Actions Bar */}
@@ -1861,24 +1974,54 @@ export default function ELogBookPage() {
                         <SelectTrigger>
                           <SelectValue placeholder="Select ID" />
                         </SelectTrigger>
-                        <SelectContent className="z-[100]" position="popper">
-                          {formData.equipmentType &&
-                            (() => {
-                              const options = equipmentByType[formData.equipmentType as keyof typeof equipmentByType] ?? [];
-                              if (options.length === 0) {
-                                return (
-                                  <SelectItem value="__no_equipment__" disabled className="text-muted-foreground">
-                                    No equipment found. Add in Equipment Master.
-                                  </SelectItem>
-                                );
-                              }
-                              return options.map((eq) => (
-                                <SelectItem key={eq.id} value={eq.equipment_number}>
-                                  {eq.equipment_number}
-                                  {eq.name ? ` – ${eq.name}` : ''}
+                        <SelectContent
+                          className="z-[9999] min-w-[340px] w-[var(--radix-select-trigger-width)]"
+                          position="popper"
+                          sideOffset={4}
+                        >
+                          {formData.equipmentType ? (() => {
+                            const options =
+                              equipmentByType[formData.equipmentType as keyof typeof equipmentByType] ?? [];
+                            if (options.length === 0) {
+                              return (
+                                <SelectItem value="__no_equipment__" disabled className="text-muted-foreground">
+                                  No equipment found. Add in Equipment Master.
                                 </SelectItem>
-                              ));
-                            })()}
+                              );
+                            }
+                            const statusById = new Map<string, any>();
+                            for (const r of scheduleStatusRows || []) {
+                              const id = String(r?.equipment_number || r?.filter_id || "");
+                              if (id) statusById.set(id, r);
+                            }
+
+                            return options.map((eq) => {
+                              const st = statusById.get(eq.equipment_number);
+                              const state = String(st?.state || "");
+                              const suffix =
+                                state === "delayed"
+                                  ? " (Delayed)"
+                                  : state === "near_delay"
+                                  ? " (Near delay)"
+                                  : state === "too_early"
+                                  ? " (Too early)"
+                                  : "";
+                              const itemClass =
+                                state === "delayed"
+                                  ? "bg-red-50 data-[highlighted]:bg-red-100 data-[state=checked]:bg-red-100"
+                                  : state === "near_delay"
+                                  ? "bg-yellow-50 data-[highlighted]:bg-yellow-100 data-[state=checked]:bg-yellow-100"
+                                  : "data-[highlighted]:bg-muted";
+
+                              return (
+                                <SelectItem key={eq.id} value={eq.equipment_number} className={itemClass}>
+                                  {eq.equipment_number}
+                                  {eq.name ? ` – ${eq.name}` : ""}
+                                  {suffix}
+                                </SelectItem>
+                              );
+                            });
+                          })() : null}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1917,6 +2060,8 @@ export default function ELogBookPage() {
                   )}
                 </div>
 
+                <MaintenanceTimingsSection value={maintenanceTimings} onChange={setMaintenanceTimings} />
+
                 {/* Chiller Fields */}
                 {formData.equipmentType === 'chiller' && (
                   <>
@@ -1948,6 +2093,7 @@ export default function ELogBookPage() {
                         </div>
                       );
                     })()}
+                    <fieldset disabled={!isReadingsApplicable} className={cn(!isReadingsApplicable && "opacity-60")}>
                     {/* Summary temperatures and pressures */}
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
@@ -2693,7 +2839,7 @@ export default function ELogBookPage() {
                       )}
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label>Cooling Tower Pump</Label>
+                          <Label>Cooling Tower-1</Label>
                           <div className="space-y-1">
                             <div className="flex items-center gap-3">
                               <span className="text-sm font-medium">Pump 1:</span>
@@ -3046,7 +3192,7 @@ export default function ELogBookPage() {
 
                         {/* Column headers */}
                         <div className="grid grid-cols-3 gap-4 text-sm font-semibold">
-                          <div>Cooling Tower Pump</div>
+                          <div>Cooling Tower-1</div>
                           <div>Chilled Water Pump</div>
                           <div>Cooling Tower Fan</div>
                         </div>
@@ -3187,12 +3333,14 @@ export default function ELogBookPage() {
                         </div>
                       </div>
                     </div>
+                  </fieldset>
                   </>
                 )}
 
                 {/* Boiler Fields */}
                 {formData.equipmentType === 'boiler' && (
                   <>
+                    <fieldset disabled={!isReadingsApplicable} className={cn(!isReadingsApplicable && "opacity-60")}>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label className="flex items-center gap-2">
@@ -3277,12 +3425,14 @@ export default function ELogBookPage() {
                         placeholder="e.g., 10000"
                       />
                     </div>
+                    </fieldset>
                   </>
                 )}
 
                 {/* Compressor Fields */}
                 {formData.equipmentType === 'compressor' && (
                   <>
+                    <fieldset disabled={!isReadingsApplicable} className={cn(!isReadingsApplicable && "opacity-60")}>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label className="flex items-center gap-2">
@@ -3351,6 +3501,7 @@ export default function ELogBookPage() {
                         />
                       </div>
                     </div>
+                    </fieldset>
                   </>
                 )}
 
@@ -3518,7 +3669,7 @@ export default function ELogBookPage() {
               <thead className="bg-muted/50">
                 <tr>
                   <th className="px-3 py-2 text-left font-semibold w-12">
-                    {pendingDraftIds.length > 0 && user?.role !== 'operator' && (
+                    {approvablePendingIds.length > 0 && user?.role !== 'operator' && (
                       <Checkbox
                         checked={allPendingSelected}
                         onCheckedChange={handleSelectAllPending}
@@ -3561,9 +3712,18 @@ export default function ELogBookPage() {
                   </tr>
                 ) : (
                   filteredLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-muted/30 transition-colors">
+                    <tr
+                      key={log.id}
+                      className={cn(
+                        "hover:bg-muted/30 transition-colors",
+                        delayedEquipmentIds.has(log.equipmentId) && "bg-red-50",
+                      )}
+                    >
                       <td className="px-4 py-3 align-middle">
-                        {(log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval') && user?.role !== 'operator' ? (
+                        {(log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval') &&
+                        user?.role !== 'operator' &&
+                        log.operator_id !== user?.id &&
+                        !(log.status === 'pending_secondary_approval' && log.approved_by_id === user?.id) ? (
                           <Checkbox
                             checked={selectedLogIds.includes(log.id)}
                             onCheckedChange={() => handleToggleLogSelection(log.id)}
@@ -3761,15 +3921,17 @@ export default function ELogBookPage() {
                               </Button>
                             </>
                           )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(log.id)}
-                            className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                            title="Delete Entry"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === 'super_admin' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(log.id)}
+                              className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                              title="Delete Entry"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -4016,7 +4178,13 @@ export default function ELogBookPage() {
                     toast.error('Comment is required for approval');
                     return;
                   }
-                  const ids = [...selectedLogIds];
+                  const ids = [...selectedLogIds].filter((id) => {
+                    const log = logs.find((l) => l.id === id);
+                    if (!log) return false;
+                    if (log.operator_id === user?.id) return false;
+                    if (log.status === 'pending_secondary_approval' && log.approved_by_id === user?.id) return false;
+                    return true;
+                  });
                   if (ids.length === 0) return;
                   if (ids.length === 1) {
                     handleApprove(ids[0], comment);

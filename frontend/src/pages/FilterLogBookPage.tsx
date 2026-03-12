@@ -48,7 +48,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { EntryIntervalBadge } from "@/components/logbook/EntryIntervalBadge";
 import { MissedReadingPopup } from "@/components/logbook/MissedReadingPopup";
-import { getNextDueAndMissed } from "@/lib/missed-reading";
+import { getNextDueAndMissed, type EquipmentMissInfo } from "@/lib/missed-reading";
+import { MaintenanceTimingsSection } from "@/components/logbook/MaintenanceTimingsSection";
+import type { MaintenanceTimingsValue } from "@/types/maintenance-timings";
 
 type FilterCategory = string;
 
@@ -121,6 +123,13 @@ const FilterLogBookPage: React.FC = () => {
   const [logs, setLogs] = useState<FilterLog[]>([]);
   const [showMissedReadingPopup, setShowMissedReadingPopup] = useState(false);
   const [missedReadingNextDue, setMissedReadingNextDue] = useState<Date | null>(null);
+  const [missedEquipments, setMissedEquipments] = useState<EquipmentMissInfo[] | null>(null);
+  const [scheduleStatusRows, setScheduleStatusRows] = useState<any[]>([]);
+  const [scheduleStatusLoading, setScheduleStatusLoading] = useState(false);
+  const [earlyEntryPopup, setEarlyEntryPopup] = useState<{ open: boolean; message: string }>({
+    open: false,
+    message: "",
+  });
   const [filteredLogs, setFilteredLogs] = useState<FilterLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -145,6 +154,13 @@ const FilterLogBookPage: React.FC = () => {
   const [selectedEquipmentUuid, setSelectedEquipmentUuid] = useState<string>("");
   const [previousReadingsForEquipment, setPreviousReadingsForEquipment] = useState<FilterLog[]>([]);
   const [previousReadingsLoading, setPreviousReadingsLoading] = useState(false);
+  const [maintenanceTimings, setMaintenanceTimings] = useState<MaintenanceTimingsValue>({
+    activityType: "operation",
+    fromDate: "",
+    toDate: "",
+    fromTime: "",
+    toTime: "",
+  });
 
   const [formData, setFormData] = useState({
     equipmentId: "",
@@ -506,27 +522,69 @@ const FilterLogBookPage: React.FC = () => {
     void refreshLogs();
   }, []);
 
+  // Load schedule status rows (interval/tolerance/window state)
   useEffect(() => {
-    if (!sessionSettings?.log_entry_interval || logs.length === 0) return;
-    const latest = logs[0];
-    const lastTs = latest?.timestamp
-      ? latest.timestamp instanceof Date
-        ? latest.timestamp
-        : new Date(latest.timestamp)
-      : null;
-    const filterId = latest?.equipmentId || "";
-    const eqInterval = filterId ? filterIdToEquipmentInterval.get(filterId) : undefined;
-    const interval = (eqInterval?.log_entry_interval || sessionSettings.log_entry_interval) as "hourly" | "shift" | "daily";
-    const shiftHours = eqInterval?.shift_duration_hours ?? sessionSettings.shift_duration_hours ?? 8;
-    const { nextDue, isMissed } = getNextDueAndMissed(lastTs, interval, shiftHours);
-    if (isMissed && nextDue) {
-      setMissedReadingNextDue(nextDue);
-      setShowMissedReadingPopup(true);
-    } else {
+    let cancelled = false;
+    setScheduleStatusLoading(true);
+    equipmentAPI
+      .scheduledStatus("filter")
+      .then((res: any) => {
+        if (cancelled) return;
+        setScheduleStatusRows(Array.isArray(res?.rows) ? res.rows : []);
+      })
+      .catch(() => {
+        if (!cancelled) setScheduleStatusRows([]);
+      })
+      .finally(() => {
+        if (!cancelled) setScheduleStatusLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [logs.length]);
+
+  // Delay popup based on tolerance-window status
+  useEffect(() => {
+    const delayed = (scheduleStatusRows || []).filter((r: any) => r?.state === "delayed");
+    if (delayed.length === 0) {
+      setMissedEquipments(null);
       setShowMissedReadingPopup(false);
       setMissedReadingNextDue(null);
+      return;
     }
-  }, [logs, sessionSettings, filterIdToEquipmentInterval]);
+    const list: EquipmentMissInfo[] = delayed.map((r: any) => {
+      const equipmentId = String(r.filter_id || "");
+      const equipmentName = r.name ? String(r.name) : undefined;
+      const lastTimestamp = r.last_entry ? new Date(r.last_entry) : null;
+      const expected = r.expected_entry ? new Date(r.expected_entry) : null;
+      const startWindow = r.start_window ? new Date(r.start_window) : null;
+      const endWindow = r.end_window ? new Date(r.end_window) : null;
+      const tol = typeof r.tolerance_minutes === "number" ? r.tolerance_minutes : undefined;
+      const interval = (r.interval || "hourly") as any;
+      const shiftHours = typeof r.shift_duration_hours === "number" ? r.shift_duration_hours : 8;
+      return {
+        equipmentId,
+        equipmentName,
+        lastTimestamp,
+        nextDue: expected,
+        expectedTime: expected,
+        toleranceMinutes: tol,
+        startWindow,
+        endWindow,
+        isMissed: true,
+        interval,
+        shiftHours,
+      };
+    });
+    setMissedEquipments(list);
+    const firstExpected =
+      list
+        .map((m) => m.nextDue)
+        .filter((d): d is Date => !!d)
+        .sort((a, b) => a.getTime() - b.getTime())[0] || null;
+    setMissedReadingNextDue(firstExpected);
+    setShowMissedReadingPopup(true);
+  }, [scheduleStatusRows]);
 
   // After equipment selection, fetch previous readings with entered-by for that equipment
   useEffect(() => {
@@ -668,15 +726,25 @@ const FilterLogBookPage: React.FC = () => {
     [filteredLogs],
   );
   const pendingDraftIds = useMemo(() => pendingDraftLogs.map((log) => log.id), [pendingDraftLogs]);
+  const approvablePendingLogs = useMemo(
+    () =>
+      pendingDraftLogs.filter(
+        (log) =>
+          (!log.operator_id || log.operator_id !== user?.id) &&
+          !(log.status === "pending_secondary_approval" && log.approved_by_id === user?.id),
+      ),
+    [pendingDraftLogs, user?.id],
+  );
+  const approvablePendingIds = useMemo(() => approvablePendingLogs.map((log) => log.id), [approvablePendingLogs]);
   const allPendingSelected =
-    pendingDraftIds.length > 0 && pendingDraftIds.every((id) => selectedLogIds.includes(id));
+    approvablePendingIds.length > 0 && approvablePendingIds.every((id) => selectedLogIds.includes(id));
   const handleSelectAllPending = () => {
     if (allPendingSelected) {
-      setSelectedLogIds((prev) => prev.filter((id) => !pendingDraftIds.includes(id)));
+      setSelectedLogIds((prev) => prev.filter((id) => !approvablePendingIds.includes(id)));
     } else {
       setSelectedLogIds((prev) => {
         const next = new Set(prev);
-        pendingDraftIds.forEach((id) => next.add(id));
+        approvablePendingIds.forEach((id) => next.add(id));
         return Array.from(next);
       });
     }
@@ -763,6 +831,34 @@ const FilterLogBookPage: React.FC = () => {
       return;
     }
 
+    // Too-early enforcement (UI-side) using tolerance-window status
+    try {
+      const selectedIdentifier = formData.equipmentId || "";
+      if (selectedIdentifier) {
+        const row = (scheduleStatusRows || []).find(
+          (r: any) => String(r?.filter_id || "") === selectedIdentifier,
+        );
+        if (row?.state === "too_early") {
+          const start = row?.start_window ? new Date(row.start_window) : null;
+          const startStr =
+            start && !Number.isNaN(start.getTime())
+              ? format(start, "HH:mm")
+              : "the allowed window";
+          setEarlyEntryPopup({
+            open: true,
+            message: `Log entry is too early.\nAllowed entry time starts at ${startStr}.`,
+          });
+          return;
+        }
+      }
+    } catch {
+      // ignore; backend will enforce
+    }
+    if (!formData.remarks.trim()) {
+      toast.error("Remarks are required.");
+      return;
+    }
+
     try {
       const timestampStr =
         formData.date && formData.time
@@ -771,6 +867,11 @@ const FilterLogBookPage: React.FC = () => {
 
       const payload: any = {
         equipment_id: formData.equipmentId,
+        activity_type: maintenanceTimings.activityType,
+        activity_from_date: maintenanceTimings.fromDate || null,
+        activity_to_date: maintenanceTimings.toDate || null,
+        activity_from_time: maintenanceTimings.fromTime || null,
+        activity_to_time: maintenanceTimings.toTime || null,
         category: formData.category,
         filter_no: formData.filterNo,
         filter_micron: formData.filterMicron || null,
@@ -870,6 +971,11 @@ const FilterLogBookPage: React.FC = () => {
   };
 
   const handleRejectClick = (logId: string) => {
+    const log = filteredLogs.find((l) => l.id === logId);
+    if (log?.operator_id === user?.id) {
+      toast.error("The log book entry must be rejected by a different user than the operator (Log Book Done By).");
+      return;
+    }
     setSelectedLogId(logId);
     setRejectComment("");
     setRejectConfirmOpen(true);
@@ -935,6 +1041,7 @@ const FilterLogBookPage: React.FC = () => {
     if (log.status === "approved" || log.status === "rejected") return false;
     if (!user) return false;
     if (log.operator_id && log.operator_id === user.id) return false;
+    if (log.status === "pending_secondary_approval" && log.approved_by_id === user?.id) return false;
     return true;
   };
 
@@ -974,11 +1081,32 @@ const FilterLogBookPage: React.FC = () => {
           onClose={() => {
             setShowMissedReadingPopup(false);
             setMissedReadingNextDue(null);
+            setMissedEquipments(null);
           }}
           logTypeLabel="Filter"
           nextDue={missedReadingNextDue}
+          equipmentList={missedEquipments ?? undefined}
         />
       )}
+
+      <AlertDialog
+        open={earlyEntryPopup.open}
+        onOpenChange={(open) => setEarlyEntryPopup((prev) => ({ ...prev, open }))}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Log entry is too early</AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-line">
+              {earlyEntryPopup.message}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setEarlyEntryPopup({ open: false, message: "" })}>
+              OK
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <div className="px-4 pt-2">
         <button
           type="button"
@@ -1111,18 +1239,39 @@ const FilterLogBookPage: React.FC = () => {
                         <SelectTrigger>
                           <SelectValue placeholder="Select filter from register" />
                         </SelectTrigger>
-                        <SelectContent className="!z-[9999] max-h-60 overflow-y-auto" position="popper">
+                        <SelectContent className="!z-[9999] min-w-[360px] w-[var(--radix-select-trigger-width)]" position="popper">
                           {filterRegisterOptions.length === 0 ? (
                             <SelectItem value="__none__" disabled className="text-muted-foreground">
                               No approved filters. Add and approve in Filter Register.
                             </SelectItem>
                           ) : (
-                            filterRegisterOptions.map((f) => (
-                              <SelectItem key={f.id} value={f.filter_id}>
-                                {f.filter_id} – {f.make} {f.model}
-                                {f.category_name ? ` (${f.category_name})` : ""}
-                              </SelectItem>
-                            ))
+                            filterRegisterOptions.map((f) => {
+                              const st = (scheduleStatusRows || []).find(
+                                (r: any) => String(r?.filter_id || "") === String(f.filter_id || ""),
+                              );
+                              const state = String(st?.state || "");
+                              const suffix =
+                                state === "delayed"
+                                  ? " (Delayed)"
+                                  : state === "near_delay"
+                                  ? " (Near delay)"
+                                  : state === "too_early"
+                                  ? " (Too early)"
+                                  : "";
+                              const itemClass =
+                                state === "delayed"
+                                  ? "bg-red-50 data-[highlighted]:bg-red-100 data-[state=checked]:bg-red-100"
+                                  : state === "near_delay"
+                                  ? "bg-yellow-50 data-[highlighted]:bg-yellow-100 data-[state=checked]:bg-yellow-100"
+                                  : "data-[highlighted]:bg-muted";
+                              return (
+                                <SelectItem key={f.id} value={f.filter_id} className={itemClass}>
+                                  {f.filter_id} – {f.make} {f.model}
+                                  {f.category_name ? ` (${f.category_name})` : ""}
+                                  {suffix}
+                                </SelectItem>
+                              );
+                            })
                           )}
                         </SelectContent>
                       </Select>
@@ -1172,6 +1321,8 @@ const FilterLogBookPage: React.FC = () => {
                       )}
                     </div>
                   )}
+
+                  <MaintenanceTimingsSection value={maintenanceTimings} onChange={setMaintenanceTimings} />
 
                   <div className="space-y-2">
                     <Label>Equipment Name (for tag info)</Label>
@@ -1773,13 +1924,13 @@ const FilterLogBookPage: React.FC = () => {
               <thead className="bg-muted">
                 <tr className="border-b">
                   <th className="px-3 py-2 text-center align-middle w-12">
-                    {pendingDraftIds.length > 0 && user?.role !== "operator" && (
-                      <Checkbox
-                        checked={allPendingSelected}
-                        onCheckedChange={handleSelectAllPending}
-                        aria-label="Select all pending/draft"
-                      />
-                    )}
+{approvablePendingIds.length > 0 && user?.role !== "operator" && (
+                        <Checkbox
+                          checked={allPendingSelected}
+                          onCheckedChange={handleSelectAllPending}
+                          aria-label="Select all pending/draft"
+                        />
+                      )}
                   </th>
                   <th className="px-3 py-2 text-center align-middle w-[110px]">
                     Date
@@ -1859,7 +2010,7 @@ const FilterLogBookPage: React.FC = () => {
                           log.status === "draft" ||
                           log.status === "pending_secondary_approval") &&
                           user?.role !== "operator" &&
-                          (!log.operator_id || log.operator_id !== user?.id) && (
+                          isSelectableForApproval(log) && (
                             <Checkbox
                               checked={isSelected}
                               onCheckedChange={() => toggleSelectLog(log)}
@@ -2057,15 +2208,17 @@ const FilterLogBookPage: React.FC = () => {
                             </>
                           )}
 
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                            title="Delete entry"
-                            onClick={() => handleDelete(log.id)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === "super_admin" && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                              title="Delete entry"
+                              onClick={() => handleDelete(log.id)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

@@ -329,7 +329,7 @@ API:
 - **Cooling Tower 1 – Water limit (L)** → `daily_water_ct1_liters`
 - **Cooling Tower 2 – Water limit (L)** → `daily_water_ct2_liters`
 - **Cooling Tower 3 – Water limit (L)** → `daily_water_ct3_liters`
-- **Cooling Tower Pump – Chemical limit (kg)** → `daily_chemical_ct1_kg`
+- **Cooling Tower-1 – Chemical limit (kg)** → `daily_chemical_ct1_kg`
 - **Chilled Water Pump – Chemical limit (kg)** → `daily_chemical_ct2_kg`
 - **Cooling Tower Fan – Chemical limit (kg)** → `daily_chemical_ct3_kg`
 

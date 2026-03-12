@@ -124,6 +124,10 @@ class Equipment(models.Model):
         blank=True,
         help_text="Per-equipment log entry interval. Null = use global SessionSetting default.",
     )
+    tolerance_minutes = models.PositiveIntegerField(
+        default=0,
+        help_text="Per-equipment tolerance window in minutes (±). 0 = no tolerance.",
+    )
     shift_duration_hours = models.PositiveIntegerField(
         null=True,
         blank=True,

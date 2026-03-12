@@ -106,6 +106,7 @@ export interface SessionSettings {
   auto_logout_minutes: number;
   password_expiry_days?: number | null;
   log_entry_interval?: LogEntryIntervalType;
+  log_entry_tolerance_minutes?: number;
   shift_duration_hours?: number;
   updated_at?: string;
 }
@@ -113,5 +114,6 @@ export interface SessionSettings {
 export interface SessionSettingsUpdate {
   auto_logout_minutes?: number;
   log_entry_interval?: LogEntryIntervalType;
+  log_entry_tolerance_minutes?: number;
   shift_duration_hours?: number;
 }

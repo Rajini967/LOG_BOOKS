@@ -43,7 +43,11 @@ export function MissedReadingPopup({
       <div className="mt-3 space-y-2">
         {equipmentList!.map((eq) => {
           const lastStr = eq.lastTimestamp ? format(eq.lastTimestamp, 'PPp') : 'no readings yet';
-          const nextStr = eq.nextDue ? format(eq.nextDue, 'PPp') : 'not scheduled';
+          const expected = (eq.expectedTime ?? eq.nextDue) || null;
+          const nextStr = expected ? format(expected, 'PPp') : 'not scheduled';
+          const tol = typeof eq.toleranceMinutes === 'number' ? eq.toleranceMinutes : null;
+          const winStart = eq.startWindow ? format(eq.startWindow, 'PPp') : null;
+          const winEnd = eq.endWindow ? format(eq.endWindow, 'PPp') : null;
           const intervalLabel =
             eq.interval === 'hourly'
               ? 'Hourly'
@@ -65,6 +69,22 @@ export function MissedReadingPopup({
               <div className="text-muted-foreground">
                 Next due: <span className="font-mono">{nextStr}</span> ({intervalLabel})
               </div>
+              {(tol !== null || (winStart && winEnd)) && (
+                <div className="text-muted-foreground">
+                  {tol !== null ? (
+                    <>
+                      Tolerance: <span className="font-mono">±{tol} min</span>
+                    </>
+                  ) : null}
+                  {winStart && winEnd ? (
+                    <>
+                      {tol !== null ? ' • ' : ''}
+                      Allowed window: <span className="font-mono">{winStart}</span> –{' '}
+                      <span className="font-mono">{winEnd}</span>
+                    </>
+                  ) : null}
+                </div>
+              )}
             </div>
           );
         })}

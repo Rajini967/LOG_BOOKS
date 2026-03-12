@@ -222,7 +222,7 @@ export default function LogbooksPage() {
                     <div className="flex items-center gap-2">
                       <Badge variant="secondary">{entryCount} entries</Badge>
                       {/* Delete button - only for managers and super admins */}
-                      {isCustom && (user?.role === 'super_admin' || user?.role === 'manager') && (
+                      {isCustom && user?.role === 'super_admin' && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                             <Button

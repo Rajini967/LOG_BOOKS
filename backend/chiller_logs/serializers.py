@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import ChillerLog, ChillerEquipmentLimit
+from reports.utils import log_limit_change
 
 
 class ChillerLogSerializer(serializers.ModelSerializer):
@@ -13,6 +14,7 @@ class ChillerLogSerializer(serializers.ModelSerializer):
         model = ChillerLog
         fields = [
             'id', 'equipment_id', 'site_id',
+            'activity_type', 'activity_from_date', 'activity_to_date', 'activity_from_time', 'activity_to_time',
             'chiller_supply_temp', 'chiller_return_temp',
             'cooling_tower_supply_temp', 'cooling_tower_return_temp',
             'ct_differential_temp', 'chiller_water_inlet_pressure',
@@ -58,6 +60,34 @@ class ChillerLogSerializer(serializers.ModelSerializer):
     def get_has_corrections(self, obj: ChillerLog) -> bool:
         return obj.corrections.exists()
 
+    def validate(self, attrs):
+        remarks = (attrs.get("remarks") if "remarks" in attrs else getattr(self.instance, "remarks", None)) or ""
+        if not str(remarks).strip():
+            raise serializers.ValidationError({"remarks": ["Remarks are required."]})
+
+        activity_type = attrs.get("activity_type") if "activity_type" in attrs else getattr(self.instance, "activity_type", "operation")
+        if (activity_type or "operation") == "operation":
+            required = [
+                "chiller_supply_temp",
+                "chiller_return_temp",
+                "cooling_tower_supply_temp",
+                "cooling_tower_return_temp",
+                "ct_differential_temp",
+                "chiller_water_inlet_pressure",
+            ]
+            missing = [f for f in required if attrs.get(f, getattr(self.instance, f, None)) in (None, "")]
+            if missing:
+                raise serializers.ValidationError({f: ["This field is required when activity_type is operation."] for f in missing})
+        return super().validate(attrs)
+
+
+CHILLER_LIMIT_FIELDS = [
+    'daily_power_limit_kw',
+    'electricity_rate_rs_per_kwh',
+    'daily_water_ct1_liters', 'daily_water_ct2_liters', 'daily_water_ct3_liters',
+    'daily_chemical_ct1_kg', 'daily_chemical_ct2_kg', 'daily_chemical_ct3_kg',
+]
+
 
 class ChillerEquipmentLimitSerializer(serializers.ModelSerializer):
     class Meta:
@@ -65,8 +95,54 @@ class ChillerEquipmentLimitSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'equipment_id', 'client_id',
             'daily_power_limit_kw',
+            'electricity_rate_rs_per_kwh',
             'daily_water_ct1_liters', 'daily_water_ct2_liters', 'daily_water_ct3_liters',
             'daily_chemical_ct1_kg', 'daily_chemical_ct2_kg', 'daily_chemical_ct3_kg',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def _get_user(self):
+        request = self.context.get("request")
+        return request.user if request and getattr(request, "user", None) else None
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        user = self._get_user()
+        for field in CHILLER_LIMIT_FIELDS:
+            if field in validated_data and validated_data[field] is not None:
+                log_limit_change(
+                    user=user,
+                    object_type="chiller_limit",
+                    key=instance.equipment_id,
+                    field_name=field,
+                    old=None,
+                    new=validated_data[field],
+                    event_type="limit_update",
+                )
+        return instance
+
+    def update(self, instance, validated_data):
+        user = self._get_user()
+        old_values = {
+            k: getattr(instance, k, None)
+            for k in CHILLER_LIMIT_FIELDS
+            if k in validated_data
+        }
+        super().update(instance, validated_data)
+        for key in validated_data:
+            if key not in CHILLER_LIMIT_FIELDS:
+                continue
+            old_val = old_values.get(key)
+            new_val = getattr(instance, key, None)
+            if old_val != new_val:
+                log_limit_change(
+                    user=user,
+                    object_type="chiller_limit",
+                    key=instance.equipment_id,
+                    field_name=key,
+                    old=old_val,
+                    new=new_val,
+                    event_type="limit_update",
+                )
+        return instance

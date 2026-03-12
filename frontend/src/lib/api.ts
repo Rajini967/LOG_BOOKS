@@ -172,6 +172,7 @@ export const authAPI = {
   updateSessionSettings: async (data: {
     auto_logout_minutes?: number;
     log_entry_interval?: 'hourly' | 'shift' | 'daily';
+    log_entry_tolerance_minutes?: number;
     shift_duration_hours?: number;
   }) => {
     const response = await api.patch('/settings/session/', data);
@@ -423,6 +424,11 @@ export const equipmentAPI = {
   approve: async (id: string, action: "approve" | "reject") => {
     const response = await api.post(`/equipment/${id}/approve/`, { action });
     return response.data;
+  },
+
+  scheduledStatus: async (log_type: 'chiller' | 'boiler' | 'filter' | 'chemical') => {
+    const response = await api.get('/equipment/scheduled_status/', { params: { log_type } });
+    return response.data as { log_type: string; rows: any[] };
   },
 };
 
@@ -829,6 +835,7 @@ export const chillerLimitsAPI = {
     equipment_id: string;
     client_id?: string;
     daily_power_limit_kw?: number | null;
+    electricity_rate_rs_per_kwh?: number | null;
     daily_water_ct1_liters?: number | null;
     daily_water_ct2_liters?: number | null;
     daily_water_ct3_liters?: number | null;
@@ -842,6 +849,7 @@ export const chillerLimitsAPI = {
   update: async (equipmentId: string, data: Partial<{
     client_id: string | null;
     daily_power_limit_kw: number | null;
+    electricity_rate_rs_per_kwh: number | null;
     daily_water_ct1_liters: number | null;
     daily_water_ct2_liters: number | null;
     daily_water_ct3_liters: number | null;

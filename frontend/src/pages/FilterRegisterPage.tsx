@@ -610,7 +610,7 @@ const FilterRegisterPage: React.FC = () => {
                                 </Button>
                               </>
                             )}
-                            {filter.status !== "approved" && (
+                            {filter.status !== "approved" && user?.role === "super_admin" && (
                               <Button
                                 size="icon"
                                 variant="outline"

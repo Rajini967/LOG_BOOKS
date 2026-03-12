@@ -560,9 +560,11 @@ export default function RecoveryTestPage() {
                         >
                           <Save className="w-4 h-4" />
                         </Button>
-                        <Button type="button" onClick={() => removeTimePoint(index)} variant="ghost" size="icon" className="text-destructive" title="Delete Time Point">
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {user?.role === 'super_admin' && (
+                          <Button type="button" onClick={() => removeTimePoint(index)} variant="ghost" size="icon" className="text-destructive" title="Delete Time Point">
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -682,15 +684,17 @@ export default function RecoveryTestPage() {
                             <Download className="w-4 h-4 mr-2" />
                             PDF
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(test.id)}
-                            className="text-destructive hover:text-destructive"
-                            title="Delete Test"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === 'super_admin' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(test.id)}
+                              className="text-destructive hover:text-destructive"
+                              title="Delete Test"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

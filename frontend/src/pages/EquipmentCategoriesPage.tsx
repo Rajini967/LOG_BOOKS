@@ -15,6 +15,7 @@ import {
 import { Plus, Layers, Edit, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { equipmentCategoryAPI } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface EquipmentCategory {
   id: string;
@@ -26,6 +27,7 @@ interface EquipmentCategory {
 }
 
 export default function EquipmentCategoriesPage() {
+  const { user } = useAuth();
   const [categories, setCategories] = useState<EquipmentCategory[]>([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -297,13 +299,15 @@ export default function EquipmentCategoriesPage() {
                           >
                             <Edit className="w-4 h-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(category.id)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === "super_admin" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(category.id)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

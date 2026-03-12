@@ -15,6 +15,7 @@ import { filterCategoryAPI } from "@/lib/api";
 import { useToast } from "@/components/ui/use-toast";
 import { Loader2, Plus, Pencil, Trash2, ArrowLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface FilterCategory {
   id: string;
@@ -31,6 +32,7 @@ const MICRON_OPTIONS = ["0.2", "0.45", "1", "3", "5", "10", "20", "100"] as cons
 const FilterCategoriesPage: React.FC = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [categories, setCategories] = useState<FilterCategory[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -275,14 +277,16 @@ const FilterCategoriesPage: React.FC = () => {
                             >
                               <Pencil className="w-4 h-4" />
                             </Button>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="h-8 w-8 text-destructive"
-                              onClick={() => handleDelete(category)}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
+                            {user?.role === "super_admin" && (
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="h-8 w-8 text-destructive"
+                                onClick={() => handleDelete(category)}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
                           </div>
                         </td>
                       </tr>

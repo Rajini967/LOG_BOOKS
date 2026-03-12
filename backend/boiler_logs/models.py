@@ -18,12 +18,28 @@ class BoilerLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     equipment_id = models.CharField(max_length=100, db_index=True)
     site_id = models.CharField(max_length=100, blank=True, null=True)
+
+    ACTIVITY_TYPE_CHOICES = [
+        ("operation", "Operation"),
+        ("maintenance", "Maintenance"),
+        ("shutdown", "Shutdown"),
+    ]
+    activity_type = models.CharField(
+        max_length=16,
+        choices=ACTIVITY_TYPE_CHOICES,
+        default="operation",
+        help_text="Activity status for this log entry (drives reading applicability).",
+    )
+    activity_from_date = models.DateField(blank=True, null=True)
+    activity_to_date = models.DateField(blank=True, null=True)
+    activity_from_time = models.TimeField(blank=True, null=True)
+    activity_to_time = models.TimeField(blank=True, null=True)
     
     # Boiler specific readings
-    feed_water_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="Feed water temperature (°C)")
-    oil_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="Oil temperature (°C)")
-    steam_temp = models.FloatField(validators=[MinValueValidator(0)], help_text="Steam temperature (°C)")
-    steam_pressure = models.FloatField(validators=[MinValueValidator(0)], help_text="Steam pressure (bar)")
+    feed_water_temp = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Feed water temperature (°C)")
+    oil_temp = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Oil temperature (°C)")
+    steam_temp = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Steam temperature (°C)")
+    steam_pressure = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Steam pressure (bar)")
     steam_flow_lph = models.FloatField(validators=[MinValueValidator(0)], blank=True, null=True, help_text="Steam flow (LPH)")
 
     # Section 1: Hourly Parameters (physical format)

@@ -15,6 +15,7 @@ import {
 import { Plus, Building2, Edit, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { departmentAPI } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface Department {
   id: string;
@@ -26,6 +27,7 @@ interface Department {
 }
 
 export default function DepartmentsPage() {
+  const { user } = useAuth();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -291,13 +293,15 @@ export default function DepartmentsPage() {
                           >
                             <Edit className="w-4 h-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(dept.id)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === "super_admin" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(dept.id)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

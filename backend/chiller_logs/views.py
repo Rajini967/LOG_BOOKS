@@ -4,7 +4,12 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
-from core.log_slot_utils import get_interval_for_equipment, get_slot_range
+from core.log_slot_utils import (
+    get_interval_for_equipment,
+    get_slot_range,
+    get_tolerance_minutes_for_equipment,
+    compute_log_entry_window,
+)
 from .models import ChillerLog, ChillerEquipmentStatusAudit, ChillerEquipmentLimit, ChillerDashboardConfig
 from .serializers import ChillerLogSerializer, ChillerEquipmentLimitSerializer
 from accounts.permissions import CanLogEntries, CanApproveReports, IsSuperAdminOrManager
@@ -123,7 +128,36 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
         """Set operator and apply daily pump/fan status logic with audit trail."""
         validated = serializer.validated_data
         equipment_id = validated.get('equipment_id')
+        activity_type = validated.get('activity_type') or 'operation'
         timestamp = validated.get('timestamp') or timezone.now()
+
+        # Too-early enforcement (± tolerance window) based on last entry time + interval.
+        try:
+            last_log = (
+                ChillerLog.objects.filter(equipment_id=equipment_id)
+                .exclude(timestamp__isnull=True)
+                .order_by("-timestamp")
+                .first()
+            )
+            if last_log and last_log.timestamp:
+                interval, shift_hours = get_interval_for_equipment(equipment_id or '', 'chiller')
+                tolerance_minutes = get_tolerance_minutes_for_equipment(equipment_id or "", "chiller")
+                window = compute_log_entry_window(last_log.timestamp, interval, shift_hours, tolerance_minutes)
+                if window:
+                    ts = timestamp
+                    if timezone.is_naive(ts):
+                        ts = timezone.make_aware(ts, timezone.get_current_timezone())
+                    if ts < window["start_window"]:
+                        start_str = timezone.localtime(window["start_window"]).strftime("%H:%M")
+                        raise ValidationError(
+                            {"detail": [f"Log entry is too early. Allowed entry time starts at {start_str}."]}
+                        )
+        except ValidationError:
+            raise
+        except Exception:
+            # Do not block logging if tolerance check fails unexpectedly
+            pass
+
         interval, shift_hours = get_interval_for_equipment(equipment_id or '', 'chiller')
         slot_start, slot_end = get_slot_range(timestamp, interval, shift_hours)
         if ChillerLog.objects.filter(
@@ -143,7 +177,7 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
         ]
 
         pump_field_labels = {
-            'cooling_tower_pump_status': 'Cooling Tower Pump',
+            'cooling_tower_pump_status': 'Cooling Tower-1',
             'chilled_water_pump_status': 'Chilled Water Pump',
             'cooling_tower_fan_status': 'Cooling Tower Fan',
         }
@@ -195,21 +229,22 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
                 {'remarks': ['Remarks are required when changing pump/fan status.']}
             )
 
-        # Validate daily limits (power, water CT-1/2/3, chemical CT-1/2/3)
-        log_date = (timestamp or timezone.now()).date()
-        ok, limit_errors = _validate_chiller_daily_limits(
-            equipment_id=equipment_id,
-            log_date=log_date,
-            power_kwh=validated.get('starter_energy_kwh') or 0,
-            water_ct1=validated.get('daily_water_consumption_ct1_liters') or 0,
-            water_ct2=validated.get('daily_water_consumption_ct2_liters') or 0,
-            water_ct3=validated.get('daily_water_consumption_ct3_liters') or 0,
-            chemical_ct1_kg=validated.get('cooling_tower_chemical_qty_per_day') or 0,
-            chemical_ct2_kg=validated.get('chilled_water_pump_chemical_qty_kg') or 0,
-            chemical_ct3_kg=validated.get('cooling_tower_fan_chemical_qty_kg') or 0,
-        )
-        if not ok:
-            raise ValidationError({'detail': limit_errors})
+        # Validate daily limits (power, water CT-1/2/3, chemical CT-1/2/3) only for operation entries
+        if activity_type == 'operation':
+            log_date = (timestamp or timezone.now()).date()
+            ok, limit_errors = _validate_chiller_daily_limits(
+                equipment_id=equipment_id,
+                log_date=log_date,
+                power_kwh=validated.get('starter_energy_kwh') or 0,
+                water_ct1=validated.get('daily_water_consumption_ct1_liters') or 0,
+                water_ct2=validated.get('daily_water_consumption_ct2_liters') or 0,
+                water_ct3=validated.get('daily_water_consumption_ct3_liters') or 0,
+                chemical_ct1_kg=validated.get('cooling_tower_chemical_qty_per_day') or 0,
+                chemical_ct2_kg=validated.get('chilled_water_pump_chemical_qty_kg') or 0,
+                chemical_ct3_kg=validated.get('cooling_tower_fan_chemical_qty_kg') or 0,
+            )
+            if not ok:
+                raise ValidationError({'detail': limit_errors})
 
         # Auto-append change notes into remarks for compliance
         combined_remarks = remarks
@@ -248,23 +283,25 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
         """Validate daily limits before saving update."""
         instance = serializer.instance
         validated = serializer.validated_data
+        activity_type = validated.get('activity_type') if 'activity_type' in validated else getattr(instance, 'activity_type', 'operation')
         log_date = (instance.timestamp or timezone.now()).date()
         def _get(field, default=None):
             return validated.get(field) if field in validated else getattr(instance, field, default)
-        ok, limit_errors = _validate_chiller_daily_limits(
-            equipment_id=instance.equipment_id,
-            log_date=log_date,
-            power_kwh=_get('starter_energy_kwh') or 0,
-            water_ct1=_get('daily_water_consumption_ct1_liters') or 0,
-            water_ct2=_get('daily_water_consumption_ct2_liters') or 0,
-            water_ct3=_get('daily_water_consumption_ct3_liters') or 0,
-            chemical_ct1_kg=_get('cooling_tower_chemical_qty_per_day') or 0,
-            chemical_ct2_kg=_get('chilled_water_pump_chemical_qty_kg') or 0,
-            chemical_ct3_kg=_get('cooling_tower_fan_chemical_qty_kg') or 0,
-            exclude_log_id=instance.id,
-        )
-        if not ok:
-            raise ValidationError({'detail': limit_errors})
+        if (activity_type or 'operation') == 'operation':
+            ok, limit_errors = _validate_chiller_daily_limits(
+                equipment_id=instance.equipment_id,
+                log_date=log_date,
+                power_kwh=_get('starter_energy_kwh') or 0,
+                water_ct1=_get('daily_water_consumption_ct1_liters') or 0,
+                water_ct2=_get('daily_water_consumption_ct2_liters') or 0,
+                water_ct3=_get('daily_water_consumption_ct3_liters') or 0,
+                chemical_ct1_kg=_get('cooling_tower_chemical_qty_per_day') or 0,
+                chemical_ct2_kg=_get('chilled_water_pump_chemical_qty_kg') or 0,
+                chemical_ct3_kg=_get('cooling_tower_fan_chemical_qty_kg') or 0,
+                exclude_log_id=instance.id,
+            )
+            if not ok:
+                raise ValidationError({'detail': limit_errors})
         serializer.save()
 
     def _is_first_log_of_day(self, log: ChillerLog) -> bool:

@@ -7,7 +7,12 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
-from core.log_slot_utils import get_interval_for_equipment, get_slot_range
+from core.log_slot_utils import (
+    get_interval_for_equipment,
+    get_slot_range,
+    get_tolerance_minutes_for_equipment,
+    compute_log_entry_window,
+)
 from .models import BoilerLog, BoilerEquipmentLimit, BoilerDashboardConfig
 from .serializers import BoilerLogSerializer, BoilerEquipmentLimitSerializer
 from accounts.permissions import CanLogEntries, CanApproveReports, IsSuperAdminOrManager
@@ -123,7 +128,35 @@ class BoilerLogViewSet(viewsets.ModelViewSet):
         """Set operator when creating a log."""
         validated = serializer.validated_data
         equipment_id = validated.get('equipment_id')
+        activity_type = validated.get('activity_type') or 'operation'
         timestamp = validated.get('timestamp') or timezone.now()
+
+        # Too-early enforcement (± tolerance window) based on last entry time + interval.
+        try:
+            last_log = (
+                BoilerLog.objects.filter(equipment_id=equipment_id)
+                .exclude(timestamp__isnull=True)
+                .order_by("-timestamp")
+                .first()
+            )
+            if last_log and last_log.timestamp:
+                interval, shift_hours = get_interval_for_equipment(equipment_id or '', 'boiler')
+                tolerance_minutes = get_tolerance_minutes_for_equipment(equipment_id or "", "boiler")
+                window = compute_log_entry_window(last_log.timestamp, interval, shift_hours, tolerance_minutes)
+                if window:
+                    ts = timestamp
+                    if timezone.is_naive(ts):
+                        ts = timezone.make_aware(ts, timezone.get_current_timezone())
+                    if ts < window["start_window"]:
+                        start_str = timezone.localtime(window["start_window"]).strftime("%H:%M")
+                        raise ValidationError(
+                            {"detail": [f"Log entry is too early. Allowed entry time starts at {start_str}."]}
+                        )
+        except ValidationError:
+            raise
+        except Exception:
+            pass
+
         interval, shift_hours = get_interval_for_equipment(equipment_id or '', 'boiler')
         slot_start, slot_end = get_slot_range(timestamp, interval, shift_hours)
         if BoilerLog.objects.filter(
@@ -134,20 +167,21 @@ class BoilerLogViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {'detail': ['An entry for this equipment already exists for this time slot.']}
             )
-        log_date = (timestamp or timezone.now()).date()
-        ok, limit_errors = _validate_boiler_daily_limits(
-            equipment_id=equipment_id,
-            log_date=log_date,
-            power_kwh=validated.get('daily_power_consumption_kwh') or 0,
-            water_liters=validated.get('daily_water_consumption_liters') or 0,
-            chemical_kg=validated.get('daily_chemical_consumption_kg') or 0,
-            diesel_liters=validated.get('daily_diesel_consumption_liters') or 0,
-            furnace_oil_liters=validated.get('daily_furnace_oil_consumption_liters') or 0,
-            brigade_kg=validated.get('daily_brigade_consumption_kg') or 0,
-            steam_kg_hr=validated.get('steam_consumption_kg_hr') or 0,
-        )
-        if not ok:
-            raise ValidationError({'detail': limit_errors})
+        if activity_type == 'operation':
+            log_date = (timestamp or timezone.now()).date()
+            ok, limit_errors = _validate_boiler_daily_limits(
+                equipment_id=equipment_id,
+                log_date=log_date,
+                power_kwh=validated.get('daily_power_consumption_kwh') or 0,
+                water_liters=validated.get('daily_water_consumption_liters') or 0,
+                chemical_kg=validated.get('daily_chemical_consumption_kg') or 0,
+                diesel_liters=validated.get('daily_diesel_consumption_liters') or 0,
+                furnace_oil_liters=validated.get('daily_furnace_oil_consumption_liters') or 0,
+                brigade_kg=validated.get('daily_brigade_consumption_kg') or 0,
+                steam_kg_hr=validated.get('steam_consumption_kg_hr') or 0,
+            )
+            if not ok:
+                raise ValidationError({'detail': limit_errors})
         serializer.save(
             operator=self.request.user,
             operator_name=self.request.user.name or self.request.user.email
@@ -157,25 +191,27 @@ class BoilerLogViewSet(viewsets.ModelViewSet):
         """Validate daily limits before saving update."""
         instance = serializer.instance
         validated = serializer.validated_data
+        activity_type = validated.get('activity_type') if 'activity_type' in validated else getattr(instance, 'activity_type', 'operation')
         log_date = (instance.timestamp or timezone.now()).date()
 
         def _get(field, default=None):
             return validated.get(field) if field in validated else getattr(instance, field, default)
 
-        ok, limit_errors = _validate_boiler_daily_limits(
-            equipment_id=instance.equipment_id,
-            log_date=log_date,
-            power_kwh=_get('daily_power_consumption_kwh') or 0,
-            water_liters=_get('daily_water_consumption_liters') or 0,
-            chemical_kg=_get('daily_chemical_consumption_kg') or 0,
-            diesel_liters=_get('daily_diesel_consumption_liters') or 0,
-            furnace_oil_liters=_get('daily_furnace_oil_consumption_liters') or 0,
-            brigade_kg=_get('daily_brigade_consumption_kg') or 0,
-            steam_kg_hr=_get('steam_consumption_kg_hr') or 0,
-            exclude_log_id=instance.id,
-        )
-        if not ok:
-            raise ValidationError({'detail': limit_errors})
+        if (activity_type or 'operation') == 'operation':
+            ok, limit_errors = _validate_boiler_daily_limits(
+                equipment_id=instance.equipment_id,
+                log_date=log_date,
+                power_kwh=_get('daily_power_consumption_kwh') or 0,
+                water_liters=_get('daily_water_consumption_liters') or 0,
+                chemical_kg=_get('daily_chemical_consumption_kg') or 0,
+                diesel_liters=_get('daily_diesel_consumption_liters') or 0,
+                furnace_oil_liters=_get('daily_furnace_oil_consumption_liters') or 0,
+                brigade_kg=_get('daily_brigade_consumption_kg') or 0,
+                steam_kg_hr=_get('steam_consumption_kg_hr') or 0,
+                exclude_log_id=instance.id,
+            )
+            if not ok:
+                raise ValidationError({'detail': limit_errors})
         serializer.save()
 
     def update(self, request, *args, **kwargs):
@@ -453,21 +489,23 @@ class BoilerLogViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {'detail': ['An entry for this equipment already exists for this time slot.']}
             )
-        log_date = (payload.get('timestamp') or timezone.now()).date()
-        ok, limit_errors = _validate_boiler_daily_limits(
-            equipment_id=original.equipment_id,
-            log_date=log_date,
-            power_kwh=payload.get('daily_power_consumption_kwh') or 0,
-            water_liters=payload.get('daily_water_consumption_liters') or 0,
-            chemical_kg=payload.get('daily_chemical_consumption_kg') or 0,
-            diesel_liters=payload.get('daily_diesel_consumption_liters') or 0,
-            furnace_oil_liters=payload.get('daily_furnace_oil_consumption_liters') or 0,
-            brigade_kg=payload.get('daily_brigade_consumption_kg') or 0,
-            steam_kg_hr=payload.get('steam_consumption_kg_hr') or 0,
-            exclude_log_id=original.id,
-        )
-        if not ok:
-            raise ValidationError({'detail': limit_errors})
+        activity_type = payload.get('activity_type') or 'operation'
+        if activity_type == 'operation':
+            log_date = (payload.get('timestamp') or timezone.now()).date()
+            ok, limit_errors = _validate_boiler_daily_limits(
+                equipment_id=original.equipment_id,
+                log_date=log_date,
+                power_kwh=payload.get('daily_power_consumption_kwh') or 0,
+                water_liters=payload.get('daily_water_consumption_liters') or 0,
+                chemical_kg=payload.get('daily_chemical_consumption_kg') or 0,
+                diesel_liters=payload.get('daily_diesel_consumption_liters') or 0,
+                furnace_oil_liters=payload.get('daily_furnace_oil_consumption_liters') or 0,
+                brigade_kg=payload.get('daily_brigade_consumption_kg') or 0,
+                steam_kg_hr=payload.get('steam_consumption_kg_hr') or 0,
+                exclude_log_id=original.id,
+            )
+            if not ok:
+                raise ValidationError({'detail': limit_errors})
 
         new_log = BoilerLog.objects.create(**payload)
 

@@ -34,6 +34,8 @@ import { Plus, Beaker, Calculator, Save, Clock, AlertCircle, Thermometer, Gauge,
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { chemicalPrepAPI, chemicalMasterAPI, chemicalStockAPI, chemicalAssignmentAPI } from '@/lib/api';
+import { MaintenanceTimingsSection } from "@/components/logbook/MaintenanceTimingsSection";
+import type { MaintenanceTimingsValue } from "@/types/maintenance-timings";
 
 interface ChemicalPrep {
   id: string;
@@ -93,6 +95,14 @@ export default function ChemicalPrepPage() {
     steamFlowLPH: '',
     remarks: '',
   });
+  const [maintenanceTimings, setMaintenanceTimings] = useState<MaintenanceTimingsValue>({
+    activityType: "operation",
+    fromDate: "",
+    toDate: "",
+    fromTime: "",
+    toTime: "",
+  });
+  const isReadingsApplicable = maintenanceTimings.activityType === "operation";
   const [calculatedQuantity, setCalculatedQuantity] = useState<number | null>(null);
   const [chemicalOptions, setChemicalOptions] = useState<
     { id: string; label: string; name: string }[]
@@ -217,6 +227,74 @@ export default function ChemicalPrepPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!formData.remarks.trim()) {
+      toast.error("Remarks are required.");
+      return;
+    }
+
+    if (!isReadingsApplicable) {
+      try {
+        const prepData: any = {
+          log_type: formData.logType,
+          activity_type: maintenanceTimings.activityType,
+          activity_from_date: maintenanceTimings.fromDate || undefined,
+          activity_to_date: maintenanceTimings.toDate || undefined,
+          activity_from_time: maintenanceTimings.fromTime || undefined,
+          activity_to_time: maintenanceTimings.toTime || undefined,
+          remarks: formData.remarks || undefined,
+          checked_by: user?.name || user?.email || 'Unknown',
+        };
+        await chemicalPrepAPI.create(prepData);
+        setIsDialogOpen(false);
+        setFormData({
+          logType: 'chemical',
+          equipmentName: '',
+          chemicalName: '',
+          chemicalCategory: 'major',
+          solutionConcentration: '',
+          waterQty: '',
+          feedWaterTemp: '',
+          oilTemp: '',
+          steamTemp: '',
+          steamPressure: '',
+          steamFlowLPH: '',
+          remarks: '',
+        });
+        setCalculatedQuantity(null);
+        toast.success('Logged successfully');
+        const data = await chemicalPrepAPI.list();
+        const formattedPreps: ChemicalPrep[] = data.map((prep: any) => ({
+          id: prep.id,
+          logType: prep.log_type,
+          date: format(new Date(prep.timestamp), 'yyyy-MM-dd'),
+          time: format(new Date(prep.timestamp), 'HH:mm:ss'),
+          equipmentName: prep.equipment_name,
+          chemicalName: prep.chemical_name,
+          chemicalPercent: prep.chemical_percent,
+          solutionConcentration: prep.solution_concentration,
+          waterQty: prep.water_qty,
+          chemicalQty: prep.chemical_qty,
+          feedWaterTemp: prep.feed_water_temp,
+          oilTemp: prep.oil_temp,
+          steamTemp: prep.steam_temp,
+          steamPressure: prep.steam_pressure,
+          steamFlowLPH: prep.steam_flow_lph,
+          remarks: prep.remarks || '',
+          checkedBy: prep.checked_by || prep.operator_name,
+          timestamp: new Date(prep.timestamp),
+          status: prep.status,
+          operator_id: prep.operator_id,
+          approved_by_id: prep.approved_by_id,
+        }));
+        formattedPreps.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        setPreps(formattedPreps);
+        return;
+      } catch (error: any) {
+        toast.error(error?.message || "Failed to save entry");
+        return;
+      }
+    }
+
     if (formData.logType === 'chemical') {
       if (!formData.chemicalName) {
         toast.error('Please select a chemical.');
@@ -286,6 +364,11 @@ export default function ChemicalPrepPage() {
       
       const prepData = {
         log_type: formData.logType,
+        activity_type: maintenanceTimings.activityType,
+        activity_from_date: maintenanceTimings.fromDate || undefined,
+        activity_to_date: maintenanceTimings.toDate || undefined,
+        activity_from_time: maintenanceTimings.fromTime || undefined,
+        activity_to_time: maintenanceTimings.toTime || undefined,
         equipment_name: formData.logType === 'chemical' ? formData.equipmentName : undefined,
         chemical: formData.logType === 'chemical' && selectedChemicalId ? selectedChemicalId : undefined,
         chemical_name: formData.logType === 'chemical' ? formData.chemicalName : undefined,
@@ -561,6 +644,9 @@ export default function ChemicalPrepPage() {
                   </Select>
                 </div>
 
+                <MaintenanceTimingsSection value={maintenanceTimings} onChange={setMaintenanceTimings} />
+
+                <fieldset disabled={!isReadingsApplicable} className={!isReadingsApplicable ? "opacity-60" : ""}>
                 {/* Chemical Monitoring Fields */}
                 {formData.logType === 'chemical' && (
                   <>
@@ -805,6 +891,7 @@ export default function ChemicalPrepPage() {
                     </div>
                   </>
                 )}
+                </fieldset>
 
                 <div className="space-y-2">
                   <Label>Remarks</Label>
@@ -977,15 +1064,17 @@ export default function ChemicalPrepPage() {
                           {prep.status === 'rejected' && (
                             <span className="text-xs text-muted-foreground">Rejected</span>
                           )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(prep.id)}
-                            className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                            title="Delete Entry"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === "super_admin" && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(prep.id)}
+                              className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                              title="Delete Entry"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

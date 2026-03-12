@@ -19,6 +19,7 @@ class FilterLogSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'equipment_id',
+            'activity_type', 'activity_from_date', 'activity_to_date', 'activity_from_time', 'activity_to_time',
             'category',
             'filter_no',
             'filter_micron',
@@ -69,4 +70,10 @@ class FilterLogSerializer(serializers.ModelSerializer):
 
     def get_has_corrections(self, obj: FilterLog) -> bool:
         return obj.corrections.exists()
+
+    def validate(self, attrs):
+        remarks = (attrs.get("remarks") if "remarks" in attrs else getattr(self.instance, "remarks", None)) or ""
+        if not str(remarks).strip():
+            raise serializers.ValidationError({"remarks": ["Remarks are required."]})
+        return super().validate(attrs)
 

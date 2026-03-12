@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import BoilerLog, BoilerEquipmentLimit
+from reports.utils import log_limit_change
 
 
 class BoilerLogSerializer(serializers.ModelSerializer):
@@ -13,6 +14,7 @@ class BoilerLogSerializer(serializers.ModelSerializer):
         model = BoilerLog
         fields = [
             'id', 'equipment_id', 'site_id',
+            'activity_type', 'activity_from_date', 'activity_to_date', 'activity_from_time', 'activity_to_time',
             'feed_water_temp', 'oil_temp', 'steam_temp',
             'steam_pressure', 'steam_flow_lph',
             'fo_hsd_ng_day_tank_level', 'feed_water_tank_level',
@@ -49,6 +51,27 @@ class BoilerLogSerializer(serializers.ModelSerializer):
             validated_data['timestamp'] = timestamp
         return super().update(instance, validated_data)
 
+    def validate(self, attrs):
+        remarks = (attrs.get("remarks") if "remarks" in attrs else getattr(self.instance, "remarks", None)) or ""
+        if not str(remarks).strip():
+            raise serializers.ValidationError({"remarks": ["Remarks are required."]})
+
+        activity_type = attrs.get("activity_type") if "activity_type" in attrs else getattr(self.instance, "activity_type", "operation")
+        if (activity_type or "operation") == "operation":
+            required = ["feed_water_temp", "oil_temp", "steam_temp", "steam_pressure"]
+            missing = [f for f in required if attrs.get(f, getattr(self.instance, f, None)) in (None, "")]
+            if missing:
+                raise serializers.ValidationError({f: ["This field is required when activity_type is operation."] for f in missing})
+        return super().validate(attrs)
+
+
+BOILER_LIMIT_FIELDS = [
+    'daily_power_limit_kw', 'daily_water_limit_liters', 'daily_chemical_limit_kg',
+    'daily_diesel_limit_liters', 'daily_furnace_oil_limit_liters', 'daily_brigade_limit_kg',
+    'daily_steam_limit_kg_hr',
+    'electricity_rate_rs_per_kwh', 'diesel_rate_rs_per_liter', 'furnace_oil_rate_rs_per_liter', 'brigade_rate_rs_per_kg',
+]
+
 
 class BoilerEquipmentLimitSerializer(serializers.ModelSerializer):
     class Meta:
@@ -62,4 +85,49 @@ class BoilerEquipmentLimitSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def _get_user(self):
+        request = self.context.get("request")
+        return request.user if request and getattr(request, "user", None) else None
+
+    def create(self, validated_data):
+        instance = super().create(validated_data)
+        user = self._get_user()
+        for field in BOILER_LIMIT_FIELDS:
+            if field in validated_data and validated_data[field] is not None:
+                log_limit_change(
+                    user=user,
+                    object_type="boiler_limit",
+                    key=instance.equipment_id,
+                    field_name=field,
+                    old=None,
+                    new=validated_data[field],
+                    event_type="limit_update",
+                )
+        return instance
+
+    def update(self, instance, validated_data):
+        user = self._get_user()
+        old_values = {
+            k: getattr(instance, k, None)
+            for k in BOILER_LIMIT_FIELDS
+            if k in validated_data
+        }
+        super().update(instance, validated_data)
+        for key in validated_data:
+            if key not in BOILER_LIMIT_FIELDS:
+                continue
+            old_val = old_values.get(key)
+            new_val = getattr(instance, key, None)
+            if old_val != new_val:
+                log_limit_change(
+                    user=user,
+                    object_type="boiler_limit",
+                    key=instance.equipment_id,
+                    field_name=key,
+                    old=old_val,
+                    new=new_val,
+                    event_type="limit_update",
+                )
+        return instance
 

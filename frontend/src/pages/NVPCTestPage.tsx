@@ -655,9 +655,11 @@ export default function NVPCTestPage() {
                           >
                             <Save className="w-4 h-4" />
                           </Button>
-                          <Button type="button" onClick={() => removeRoom(roomIndex)} variant="ghost" size="icon" className="text-destructive" title="Delete Room">
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === 'super_admin' && (
+                            <Button type="button" onClick={() => removeRoom(roomIndex)} variant="ghost" size="icon" className="text-destructive" title="Delete Room">
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                       <div>
@@ -694,9 +696,11 @@ export default function NVPCTestPage() {
                                 >
                                   <Save className="w-4 h-4" />
                                 </Button>
-                                <Button type="button" onClick={() => removeSamplingPoint(roomIndex, pointIndex)} variant="ghost" size="icon" className="text-destructive" title="Delete Sampling Point">
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
+                                {user?.role === 'super_admin' && (
+                                  <Button type="button" onClick={() => removeSamplingPoint(roomIndex, pointIndex)} variant="ghost" size="icon" className="text-destructive" title="Delete Sampling Point">
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                )}
                               </div>
                             </div>
                             
@@ -739,7 +743,7 @@ export default function NVPCTestPage() {
                                 >
                                   <Plus className="w-4 h-4" />
                                 </Button>
-                                {point.readings05.length > 1 && (
+                                {point.readings05.length > 1 && user?.role === 'super_admin' && (
                                   <Button
                                     type="button"
                                     onClick={() => {
@@ -804,7 +808,7 @@ export default function NVPCTestPage() {
                                 >
                                   <Plus className="w-4 h-4" />
                                 </Button>
-                                {point.readings5.length > 1 && (
+                                {point.readings5.length > 1 && user?.role === 'super_admin' && (
                                   <Button
                                     type="button"
                                     onClick={() => {
@@ -935,15 +939,17 @@ export default function NVPCTestPage() {
                             <Download className="w-4 h-4 mr-2" />
                             PDF
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(test.id)}
-                            className="text-destructive hover:text-destructive"
-                            title="Delete Test"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === 'super_admin' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(test.id)}
+                              className="text-destructive hover:text-destructive"
+                              title="Delete Test"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

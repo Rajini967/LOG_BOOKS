@@ -560,9 +560,11 @@ export default function FilterIntegrityTestPage() {
                           >
                             <Save className="w-4 h-4" />
                           </Button>
-                          <Button type="button" onClick={() => removeRoom(roomIndex)} variant="ghost" size="icon" className="text-destructive" title="Delete Room">
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === 'super_admin' && (
+                            <Button type="button" onClick={() => removeRoom(roomIndex)} variant="ghost" size="icon" className="text-destructive" title="Delete Room">
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                       <div>
@@ -663,9 +665,11 @@ export default function FilterIntegrityTestPage() {
                                 >
                                   <Save className="w-4 h-4" />
                                 </Button>
+                                {user?.role === 'super_admin' && (
                                 <Button type="button" onClick={() => removeFilter(roomIndex, filterIndex)} variant="ghost" size="icon" className="text-destructive" title="Delete Filter">
                                   <Trash2 className="w-4 h-4" />
                                 </Button>
+                              )}
                               </div>
                             </div>
                             {filter.downstreamConcentration > 0 && filter.upstreamConcentration > 0 && (
@@ -783,15 +787,17 @@ export default function FilterIntegrityTestPage() {
                             <Download className="w-4 h-4 mr-2" />
                             PDF
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(test.id)}
-                            className="text-destructive hover:text-destructive"
-                            title="Delete Test"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === 'super_admin' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(test.id)}
+                              className="text-destructive hover:text-destructive"
+                              title="Delete Test"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>

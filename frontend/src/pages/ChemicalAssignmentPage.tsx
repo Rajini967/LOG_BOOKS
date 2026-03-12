@@ -520,7 +520,7 @@ const ChemicalAssignmentPage: React.FC = () => {
                           {row.created_by_name || "-"}
                         </td>
                         <td className="px-4 py-2 text-right">
-                          {isAdmin ? (
+                          {user?.role === "super_admin" ? (
                             <Button
                               size="icon"
                               variant="outline"

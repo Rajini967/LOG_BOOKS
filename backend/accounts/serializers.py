@@ -11,6 +11,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import User, UserRole, PasswordResetToken, hash_reset_token, UserActivityLog, SessionSetting
 from .password_utils import check_password_history, append_password_history
 from .audit_utils import log_user_audit_event
+from reports.utils import log_limit_change
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -507,6 +508,7 @@ class SessionSettingSerializer(serializers.ModelSerializer):
             "auto_logout_minutes",
             "password_expiry_days",
             "log_entry_interval",
+            "log_entry_tolerance_minutes",
             "shift_duration_hours",
             "updated_at",
         ]
@@ -523,13 +525,48 @@ class SessionSettingSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"shift_duration_hours": "Shift duration must be between 1 and 24 hours when interval is 'shift'."}
                 )
+        tolerance = attrs.get("log_entry_tolerance_minutes")
+        if tolerance is None and self.instance is not None:
+            tolerance = getattr(self.instance, "log_entry_tolerance_minutes", 0)
+        if tolerance is not None and tolerance < 0:
+            raise serializers.ValidationError(
+                {"log_entry_tolerance_minutes": "Tolerance must be greater than or equal to 0."}
+            )
         return attrs
 
     def update(self, instance, validated_data):
         request = self.context.get("request")
-        if request and getattr(request, "user", None) and request.user.is_authenticated:
-            instance.updated_by = request.user
-        return super().update(instance, validated_data)
+        user = request.user if request and getattr(request, "user", None) and request.user.is_authenticated else None
+        if user:
+            instance.updated_by = user
+
+        setting_fields = (
+            "auto_logout_minutes",
+            "password_expiry_days",
+            "log_entry_interval",
+            "log_entry_tolerance_minutes",
+            "shift_duration_hours",
+        )
+        old_values = {k: getattr(instance, k, None) for k in setting_fields if k in validated_data}
+
+        result = super().update(instance, validated_data)
+
+        for key in validated_data:
+            if key not in setting_fields:
+                continue
+            old_val = old_values.get(key)
+            new_val = getattr(instance, key, None)
+            if old_val != new_val:
+                log_limit_change(
+                    user=user,
+                    object_type="session_setting",
+                    key="1",
+                    field_name=key,
+                    old=old_val,
+                    new=new_val,
+                    event_type="config_update",
+                )
+        return result
 
 
 

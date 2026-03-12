@@ -163,6 +163,7 @@ class ChemicalPreparationSerializer(serializers.ModelSerializer):
             'id', 'equipment_name', 'chemical', 'chemical_name', 'chemical_category',
             'chemical_percent', 'chemical_concentration', 'solution_concentration', 'water_qty', 'chemical_qty',
             'batch_no', 'done_by',
+            'activity_type', 'activity_from_date', 'activity_to_date', 'activity_from_time', 'activity_to_time',
             'remarks', 'comment', 'checked_by', 'operator_id', 'operator_name', 'status',
             'approved_by_id', 'approved_at', 'secondary_approved_by_id', 'secondary_approved_at',
             'corrects_id', 'has_corrections', 'timestamp', 'created_at', 'updated_at'
@@ -181,6 +182,12 @@ class ChemicalPreparationSerializer(serializers.ModelSerializer):
         elif timestamp is not None:
             validated_data['timestamp'] = timestamp
         return super().update(instance, validated_data)
+
+    def validate(self, attrs):
+        remarks = (attrs.get("remarks") if "remarks" in attrs else getattr(self.instance, "remarks", None)) or ""
+        if not str(remarks).strip():
+            raise serializers.ValidationError({"remarks": ["Remarks are required."]})
+        return super().validate(attrs)
 
     def get_has_corrections(self, obj: ChemicalPreparation) -> bool:
         return obj.corrections.exists()

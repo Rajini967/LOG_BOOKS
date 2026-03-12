@@ -316,13 +316,15 @@ export default function LogbookBuilderPage() {
                         >
                           <Settings2 className="w-4 h-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeField(index)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        {user?.role === 'super_admin' && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeField(index)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        )}
                       </div>
                     </div>
 

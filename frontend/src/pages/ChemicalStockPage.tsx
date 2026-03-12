@@ -432,6 +432,7 @@ const ChemicalStockPage: React.FC = () => {
                               >
                                 <Pencil className="w-4 h-4" />
                               </Button>
+                              {user?.role === "super_admin" && (
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -442,6 +443,7 @@ const ChemicalStockPage: React.FC = () => {
                               >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
+                            )}
                             </div>
                           </td>
                         )}

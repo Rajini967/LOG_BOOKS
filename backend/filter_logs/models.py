@@ -23,6 +23,22 @@ class FilterLog(models.Model):
     filter_size = models.CharField(max_length=100, blank=True, null=True)
     tag_info = models.CharField(max_length=255, blank=True, null=True)
 
+    ACTIVITY_TYPE_CHOICES = [
+        ("operation", "Operation"),
+        ("maintenance", "Maintenance"),
+        ("shutdown", "Shutdown"),
+    ]
+    activity_type = models.CharField(
+        max_length=16,
+        choices=ACTIVITY_TYPE_CHOICES,
+        default="operation",
+        help_text="Activity status for this log entry (drives reading applicability).",
+    )
+    activity_from_date = models.DateField(blank=True, null=True)
+    activity_to_date = models.DateField(blank=True, null=True)
+    activity_from_time = models.TimeField(blank=True, null=True)
+    activity_to_time = models.TimeField(blank=True, null=True)
+
     installed_date = models.DateField()
     integrity_done_date = models.DateField(blank=True, null=True)
     integrity_due_date = models.DateField()

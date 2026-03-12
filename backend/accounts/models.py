@@ -220,6 +220,10 @@ class SessionSetting(models.Model):
         default=LogEntryInterval.HOURLY,
         help_text="Common log book entry interval for all log monitors (chiller, boiler, filter, chemical, etc.).",
     )
+    log_entry_tolerance_minutes = models.PositiveIntegerField(
+        default=0,
+        help_text="Default tolerance window in minutes (±) for log entry time. 0 = no tolerance.",
+    )
     shift_duration_hours = models.PositiveIntegerField(
         default=8,
         help_text="Shift length in hours; used when log_entry_interval is 'shift' for next-entry-due calculation.",

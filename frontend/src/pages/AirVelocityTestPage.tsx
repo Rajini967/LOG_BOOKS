@@ -866,16 +866,18 @@ export default function AirVelocityTestPage() {
                           >
                             <Save className="w-4 h-4" />
                           </Button>
-                          <Button
-                            type="button"
-                            onClick={() => removeRoom(roomIndex)}
-                            variant="ghost"
-                            size="icon"
-                            className="text-destructive"
-                            title="Delete Room"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === 'super_admin' && (
+                            <Button
+                              type="button"
+                              onClick={() => removeRoom(roomIndex)}
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive"
+                              title="Delete Room"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
 
@@ -947,6 +949,7 @@ export default function AirVelocityTestPage() {
                                 >
                                   <Save className="w-4 h-4" />
                                 </Button>
+                                {user?.role === 'super_admin' && (
                                 <Button
                                   type="button"
                                   onClick={() => removeFilter(roomIndex, filterIndex)}
@@ -957,6 +960,7 @@ export default function AirVelocityTestPage() {
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </Button>
+                              )}
                               </div>
                             </div>
 
@@ -1120,15 +1124,17 @@ export default function AirVelocityTestPage() {
                             <Download className="w-4 h-4 mr-2" />
                             PDF
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(test.id)}
-                            className="text-destructive hover:text-destructive"
-                            title="Delete Test"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          {user?.role === 'super_admin' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(test.id)}
+                              className="text-destructive hover:text-destructive"
+                              title="Delete Test"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </td>
                     </tr>
