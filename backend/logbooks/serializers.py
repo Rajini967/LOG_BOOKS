@@ -263,7 +263,7 @@ class LogbookEntrySerializer(serializers.ModelSerializer):
                 field_name=key,
                 old=None,
                 new=_audit_value(value),
-                event_type="log_update",
+                event_type="log_created",
             )
         return instance
 

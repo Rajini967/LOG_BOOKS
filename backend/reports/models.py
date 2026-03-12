@@ -71,15 +71,26 @@ class AuditEvent(models.Model):
     """
 
     EVENT_TYPE_CHOICES = [
+        # Configuration / limits
         ("limit_update", "Limit Update"),
         ("config_update", "Configuration Update"),
+        # Log lifecycle
         ("log_update", "Log Update"),
         ("log_correction", "Log Correction"),
+        ("log_created", "Log Created"),
+        ("log_approved", "Log Approved"),
+        ("log_rejected", "Log Rejected"),
+        ("log_deleted", "Log Deleted"),
         # User lifecycle (21 CFR Part 11)
         ("user_created", "User Created"),
+        ("user_updated", "User Updated"),
         ("password_changed", "Password Changed"),
         ("user_locked", "User Locked"),
         ("user_unlocked", "User Unlocked"),
+        ("login", "Login"),
+        ("logout", "Logout"),
+        # Master data
+        ("equipment_update", "Equipment Update"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

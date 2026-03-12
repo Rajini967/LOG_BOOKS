@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from accounts.permissions import CanLogEntries, CanApproveReports
+from reports.audit_helpers import log_object_create, log_object_delete, log_status_change
 
 from .models import (
     AirVelocityTest, AirVelocityRoom, AirVelocityFilter,
@@ -34,16 +35,27 @@ class BaseTestCertificateViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
     
     def perform_create(self, serializer):
-        """Set operator when creating a test."""
-        serializer.save(
+        """Set operator when creating a test and record creation in audit trail."""
+        test = serializer.save(
             operator=self.request.user,
             operator_name=self.request.user.name or self.request.user.email
+        )
+
+        log_object_create(
+            user=self.request.user,
+            object_type="test_certificate",
+            object_id=str(test.id),
+            extra={
+                "certificate_no": getattr(test, "certificate_no", None),
+                "status": test.status,
+            },
         )
     
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
         """Approve or reject a test certificate."""
         test = self.get_object()
+        old_status = test.status
         action_type = request.data.get('action', 'approve')
         remarks = request.data.get('remarks', '')
         
@@ -63,6 +75,26 @@ class BaseTestCertificateViewSet(viewsets.ModelViewSet):
         if remarks:
             test.remarks = remarks
         test.save()
+
+        # Audit status transition
+        event_type = "log_update"
+        if action_type == "approve" and test.status == "approved":
+            event_type = "log_approved"
+        elif action_type == "reject":
+            event_type = "log_rejected"
+        log_status_change(
+            user=request.user,
+            object_type="test_certificate",
+            object_id=str(test.id),
+            from_status=old_status,
+            to_status=test.status,
+            event_type=event_type,
+            extra={
+                "remarks": remarks,
+                "action": action_type,
+                "certificate_no": getattr(test, "certificate_no", None),
+            },
+        )
         
         # Create report entry when approved
         if action_type == 'approve':
@@ -103,6 +135,28 @@ class BaseTestCertificateViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(test)
         return Response(serializer.data)
+
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a test certificate while recording the deletion in the audit trail.
+        """
+        instance = self.get_object()
+        test_id = str(instance.id)
+        certificate_no = getattr(instance, "certificate_no", None)
+
+        response = super().destroy(request, *args, **kwargs)
+
+        log_object_delete(
+            user=request.user,
+            object_type="test_certificate",
+            object_id=test_id,
+            extra={
+                "certificate_no": certificate_no,
+            },
+        )
+
+        return response
 
 
 class AirVelocityTestViewSet(BaseTestCertificateViewSet):

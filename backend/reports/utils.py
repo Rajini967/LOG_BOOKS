@@ -3,7 +3,8 @@ Utility functions for creating reports when entries are approved
 and for logging configuration/audit events.
 """
 from django.conf import settings
-from .models import Report, AuditEvent
+from .models import Report
+from .audit_helpers import log_field_change
 
 
 def create_report_entry(
@@ -81,6 +82,10 @@ def log_limit_change(
     """
     Helper to record a limit/configuration change in the audit trail.
 
+    This is a thin wrapper around the generic ``log_field_change`` helper so
+    that existing callers continue to work while benefiting from the unified
+    audit conventions.
+
     Args:
         user: User performing the change (can be None for system changes)
         object_type: Short label for the object type (e.g. 'chiller_limit')
@@ -91,19 +96,14 @@ def log_limit_change(
         extra: Optional dict with additional context
         event_type: Audit event type label, defaults to 'limit_update'
     """
-    try:
-        AuditEvent.objects.create(
-            user=user if getattr(user, "is_authenticated", False) else None,
-            event_type=event_type or "limit_update",
-            object_type=object_type,
-            object_id=str(key),
-            field_name=field_name,
-            old_value=str(old) if old is not None else None,
-            new_value=str(new) if new is not None else None,
-            extra=extra or {},
-        )
-    except Exception as e:  # pragma: no cover - safety net
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Error logging limit change: {e}")
+    log_field_change(
+        user=user,
+        object_type=object_type,
+        object_id=str(key),
+        field_name=field_name,
+        old_value=old,
+        new_value=new,
+        event_type=event_type or "limit_update",
+        extra=extra or {},
+    )
 

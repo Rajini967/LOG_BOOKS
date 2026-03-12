@@ -17,6 +17,7 @@ from .serializers import (
 )
 from accounts.permissions import CanLogEntries, CanApproveReports, IsSuperAdminOrManager
 from reports.utils import log_limit_change
+from reports.audit_helpers import log_object_create, log_object_delete, log_status_change
 
 
 class ChemicalViewSet(viewsets.ReadOnlyModelViewSet):
@@ -242,9 +243,22 @@ class ChemicalPreparationViewSet(viewsets.ModelViewSet):
                     }
                 )
 
-        serializer.save(
+        prep = serializer.save(
             operator=self.request.user,
             operator_name=self.request.user.name or self.request.user.email,
+        )
+
+        # High-level lifecycle audit: creation
+        log_object_create(
+            user=self.request.user,
+            object_type="chemical_log",
+            object_id=str(prep.id),
+            extra={
+                "equipment_name": prep.equipment_name,
+                "chemical_name": prep.chemical_name,
+                "status": prep.status,
+                "timestamp": timezone.localtime(prep.timestamp).isoformat() if prep.timestamp else None,
+            },
         )
 
     def update(self, request, *args, **kwargs):
@@ -561,6 +575,7 @@ class ChemicalPreparationViewSet(viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         """Approve or reject a chemical preparation. Handles primary, secondary approval (after correction), and reject."""
         prep = self.get_object()
+        old_status = prep.status
         action_type = request.data.get('action', 'approve')
         remarks = (request.data.get('remarks') or '').strip()
         
@@ -620,6 +635,27 @@ class ChemicalPreparationViewSet(viewsets.ModelViewSet):
         if remarks:
             prep.comment = remarks
         prep.save()
+
+        # Audit status transition
+        event_type = "log_update"
+        if action_type == "approve" and prep.status == "approved":
+            event_type = "log_approved"
+        elif action_type == "reject":
+            event_type = "log_rejected"
+        log_status_change(
+            user=request.user,
+            object_type="chemical_log",
+            object_id=str(prep.id),
+            from_status=old_status,
+            to_status=prep.status,
+            event_type=event_type,
+            extra={
+                "remarks": remarks,
+                "action": action_type,
+                "equipment_name": prep.equipment_name,
+                "chemical_name": prep.chemical_name,
+            },
+        )
         
         if action_type == 'approve' and prep.status == 'approved':
             from reports.utils import create_report_entry
@@ -638,3 +674,27 @@ class ChemicalPreparationViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(prep)
         return Response(serializer.data)
+
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a chemical preparation entry while recording the deletion in the audit trail.
+        """
+        instance = self.get_object()
+        prep_id = str(instance.id)
+        equipment_name = instance.equipment_name
+        chemical_name = instance.chemical_name
+
+        response = super().destroy(request, *args, **kwargs)
+
+        log_object_delete(
+            user=request.user,
+            object_type="chemical_log",
+            object_id=prep_id,
+            extra={
+                "equipment_name": equipment_name,
+                "chemical_name": chemical_name,
+            },
+        )
+
+        return response

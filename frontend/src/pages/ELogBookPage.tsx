@@ -88,12 +88,6 @@ interface ELogBook {
   coolingTowerFanStatus?: string;
   coolingTowerBlowoffValveStatus?: string;
   coolingTowerBlowdownTimeMin?: number;
-  coolingTowerChemicalName?: string;
-  coolingTowerChemicalQtyPerDay?: number;
-  chilledWaterPumpChemicalName?: string;
-  chilledWaterPumpChemicalQtyKg?: number;
-  coolingTowerFanChemicalName?: string;
-  coolingTowerFanChemicalQtyKg?: number;
   recordingFrequency?: string;
   operatorSign?: string;
   verifiedBy?: string;
@@ -222,9 +216,6 @@ const CHILLER_LIST_FIELDS: { key: keyof ELogBook; label: string; unit: string }[
   { key: 'compressorRunningTimeMin', label: 'Comp Run', unit: 'min' },
   { key: 'starterEnergyKwh', label: 'Energy', unit: 'kWh' },
   { key: 'coolingTowerBlowdownTimeMin', label: 'CT Blowdown', unit: 'min' },
-  { key: 'coolingTowerChemicalQtyPerDay', label: 'CT Chemical', unit: 'Kg' },
-  { key: 'chilledWaterPumpChemicalQtyKg', label: 'CHW Pump Chemical', unit: 'Kg' },
-  { key: 'coolingTowerFanChemicalQtyKg', label: 'CT Fan Chemical', unit: 'Kg' },
 ];
 const BOILER_LIST_FIELDS: { key: string; label: string; unit: string }[] = [
   { key: 'feedWaterTemp', label: 'Feed Water', unit: '°C' },
@@ -253,9 +244,6 @@ const COMPRESSOR_LIST_FIELDS: { key: string; label: string; unit: string }[] = [
   { key: 'compressorFlow', label: 'Flow', unit: 'L/min' },
 ];
 
-// Chemical equipment name options (plan: Equipment ID dropdown is for chiller/boiler/compressor/filter; chemical uses equipment_name, kept as static fallback)
-const CHEMICAL_EQUIPMENT_NAMES = ['EN0001-MGF', 'EN0002-RO', 'EN0003-PW', 'EN0004-Other', 'EN0005-Other'];
-
 interface EquipmentOption {
   id: string;
   equipment_number: string;
@@ -273,6 +261,7 @@ export default function ELogBookPage() {
   const [selectedSchema, setSelectedSchema] = useState<LogbookSchema | null>(null);
   const [customFormData, setCustomFormData] = useState<Record<string, any>>({});
   const [logs, setLogs] = useState<ELogBook[]>([]);
+  // First chiller log for each calendar day (global across all operators & equipment)
   const [firstChillerLogByDay, setFirstChillerLogByDay] = useState<Record<string, ELogBook>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -331,12 +320,6 @@ export default function ELogBookPage() {
     coolingTowerFanStatus: '',
     coolingTowerBlowoffValveStatus: '',
     coolingTowerBlowdownTimeMin: '',
-    coolingTowerChemicalName: '',
-    coolingTowerChemicalQtyPerDay: '',
-    chilledWaterPumpChemicalName: '',
-    chilledWaterPumpChemicalQtyKg: '',
-    coolingTowerFanChemicalName: '',
-    coolingTowerFanChemicalQtyKg: '',
     recordingFrequency: '',
     operatorSign: '',
     verifiedBy: '',
@@ -363,11 +346,8 @@ export default function ELogBookPage() {
   });
   const isReadingsApplicable = maintenanceTimings.activityType === "operation";
   
-  // Whether the current entry is the first chiller reading of the day for the current operator
-  const todayKey =
-    user?.id && formData.equipmentType === 'chiller'
-      ? `${user.id}_${format(new Date(), 'yyyy-MM-dd')}`
-      : '';
+  // Whether the current entry is the first chiller reading of the day (any operator, any equipment)
+  const todayKey = formData.equipmentType === 'chiller' ? format(new Date(), 'yyyy-MM-dd') : '';
   const hasFirstChillerLogToday = !!(todayKey && firstChillerLogByDay[todayKey]);
   const canEditRunningSection = !hasFirstChillerLogToday;
   
@@ -669,12 +649,6 @@ export default function ELogBookPage() {
           coolingTowerFanStatus: log.cooling_tower_fan_status,
           coolingTowerBlowoffValveStatus: log.cooling_tower_blowoff_valve_status,
           coolingTowerBlowdownTimeMin: log.cooling_tower_blowdown_time_min,
-          coolingTowerChemicalName: log.cooling_tower_chemical_name,
-          coolingTowerChemicalQtyPerDay: log.cooling_tower_chemical_qty_per_day,
-          chilledWaterPumpChemicalName: log.chilled_water_pump_chemical_name,
-          chilledWaterPumpChemicalQtyKg: log.chilled_water_pump_chemical_qty_kg,
-          coolingTowerFanChemicalName: log.cooling_tower_fan_chemical_name,
-          coolingTowerFanChemicalQtyKg: log.cooling_tower_fan_chemical_qty_kg,
           recordingFrequency: log.recording_frequency,
           operatorSign: log.operator_sign,
           verifiedBy: log.verified_by,
@@ -694,12 +668,11 @@ export default function ELogBookPage() {
       console.log('Total chiller logs after refresh:', allLogs.length, allLogs);
       setLogs(allLogs);
 
-      // Rebuild map of first chiller log per operator per day
+      // Rebuild map of first chiller log per day (global across operators & equipment)
       const firstMap: Record<string, ELogBook> = {};
       allLogs.forEach(log => {
         if (log.equipmentType !== 'chiller') return;
-        if (!log.operator_id) return;
-        const key = `${log.operator_id}_${log.date}`;
+        const key = log.date;
         const existing = firstMap[key];
         if (!existing || log.timestamp.getTime() < existing.timestamp.getTime()) {
           firstMap[key] = log;
@@ -874,8 +847,8 @@ export default function ELogBookPage() {
         const now = new Date();
         const today = format(now, 'yyyy-MM-dd');
 
-        // Determine operator-day baseline log (first chiller log by this operator today)
-        const key = user?.id ? `${user.id}_${today}` : '';
+        // Determine day baseline log (first chiller log created today, any operator & equipment)
+        const key = today;
         const firstLogForDay = key ? firstChillerLogByDay[key] : undefined;
 
         // If not the first log, enforce remarks when pump/fan status changes
@@ -970,18 +943,6 @@ export default function ELogBookPage() {
           cooling_tower_blowoff_valve_status: formData.coolingTowerBlowoffValveStatus || undefined,
           cooling_tower_blowdown_time_min: formData.coolingTowerBlowdownTimeMin
             ? parseFloat(formData.coolingTowerBlowdownTimeMin)
-            : undefined,
-          cooling_tower_chemical_name: formData.coolingTowerChemicalName || undefined,
-          cooling_tower_chemical_qty_per_day: formData.coolingTowerChemicalQtyPerDay
-            ? parseFloat(formData.coolingTowerChemicalQtyPerDay)
-            : undefined,
-          chilled_water_pump_chemical_name: formData.chilledWaterPumpChemicalName || undefined,
-          chilled_water_pump_chemical_qty_kg: formData.chilledWaterPumpChemicalQtyKg
-            ? parseFloat(formData.chilledWaterPumpChemicalQtyKg)
-            : undefined,
-          cooling_tower_fan_chemical_name: formData.coolingTowerFanChemicalName || undefined,
-          cooling_tower_fan_chemical_qty_kg: formData.coolingTowerFanChemicalQtyKg
-            ? parseFloat(formData.coolingTowerFanChemicalQtyKg)
             : undefined,
         };
         if (isReadingsApplicable) {
@@ -1123,12 +1084,6 @@ export default function ELogBookPage() {
         coolingTowerFanStatus: '',
         coolingTowerBlowoffValveStatus: '',
         coolingTowerBlowdownTimeMin: '',
-        coolingTowerChemicalName: '',
-        coolingTowerChemicalQtyPerDay: '',
-        chilledWaterPumpChemicalName: '',
-        chilledWaterPumpChemicalQtyKg: '',
-        coolingTowerFanChemicalName: '',
-        coolingTowerFanChemicalQtyKg: '',
         recordingFrequency: '',
         operatorSign: '',
         verifiedBy: '',
@@ -1297,15 +1252,6 @@ export default function ELogBookPage() {
       coolingTowerBlowoffValveStatus: log.coolingTowerBlowoffValveStatus || '',
       coolingTowerBlowdownTimeMin:
         log.coolingTowerBlowdownTimeMin != null ? String(log.coolingTowerBlowdownTimeMin) : '',
-      coolingTowerChemicalName: log.coolingTowerChemicalName || '',
-      coolingTowerChemicalQtyPerDay:
-        log.coolingTowerChemicalQtyPerDay != null ? String(log.coolingTowerChemicalQtyPerDay) : '',
-      chilledWaterPumpChemicalName: log.chilledWaterPumpChemicalName || '',
-      chilledWaterPumpChemicalQtyKg:
-        log.chilledWaterPumpChemicalQtyKg != null ? String(log.chilledWaterPumpChemicalQtyKg) : '',
-      coolingTowerFanChemicalName: log.coolingTowerFanChemicalName || '',
-      coolingTowerFanChemicalQtyKg:
-        log.coolingTowerFanChemicalQtyKg != null ? String(log.coolingTowerFanChemicalQtyKg) : '',
       recordingFrequency: log.recordingFrequency || '',
       operatorSign: log.operatorSign || '',
       verifiedBy: log.verifiedBy || '',
@@ -1413,6 +1359,21 @@ export default function ELogBookPage() {
     return null;
   };
 
+const getStatusLabel = (status: ELogBook['status']) => {
+  switch (status) {
+    case 'approved':
+      return 'Approved';
+    case 'rejected':
+      return 'Rejected';
+    case 'pending_secondary_approval':
+    case 'pending':
+      return 'Pending';
+    case 'draft':
+    default:
+      return 'Draft';
+  }
+};
+
   const validateChillerForm = (): boolean => {
     // Required fields (presence + basic numeric validation where applicable).
     // IMPORTANT: Do NOT block save on limit violations; limits are shown
@@ -1473,9 +1434,6 @@ export default function ELogBookPage() {
     const optionalNumeric: { key: string; label: string }[] = [
       { key: 'chillerMakeupWaterFlow', label: 'Chiller make up water flow' },
       { key: 'coolingTowerBlowdownTimeMin', label: 'Cooling tower blow down time (minutes)' },
-      { key: 'coolingTowerChemicalQtyPerDay', label: 'Cooling tower-1 chemical quantity (Kg)' },
-      { key: 'chilledWaterPumpChemicalQtyKg', label: 'Chilled water pump chemical quantity (Kg)' },
-      { key: 'coolingTowerFanChemicalQtyKg', label: 'Cooling tower fan chemical quantity (Kg)' },
     ];
 
     for (const field of optionalNumeric) {
@@ -1583,7 +1541,7 @@ export default function ELogBookPage() {
                   {/* Date Range */}
                   <div className="space-y-3">
                     <Label className="text-base font-semibold">Date Range</Label>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="mt-8 grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>From Date</Label>
                         <Input
@@ -1657,7 +1615,7 @@ export default function ELogBookPage() {
                   {/* Time Range */}
                   <div className="space-y-3">
                     <Label className="text-base font-semibold">Time Range (Optional)</Label>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="mt-6 grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label>From Time</Label>
                         <Input
@@ -1721,7 +1679,7 @@ export default function ELogBookPage() {
             <DialogTrigger asChild>
               <Button
                 variant="accent"
-                onClick={() => setEditingLogId(null)}
+                      onClick={() => setEditingLogId(null)}
               >
                 <Plus className="w-4 h-4 mr-2" />
                 New Entry
@@ -1749,7 +1707,7 @@ export default function ELogBookPage() {
                       onValueChange={(v) => {
                         setFormData({
                           ...formData,
-                          equipmentType: v as 'chiller' | 'boiler' | 'compressor' | 'chemical',
+                          equipmentType: v as 'chiller' | 'boiler' | 'compressor' | (string & {}),
                           equipmentId: '',
                           // Reset all fields when type changes
                           chillerSupplyTemp: '',
@@ -1780,8 +1738,6 @@ export default function ELogBookPage() {
                           chilledWaterPumpStatus: '',
                           coolingTowerFanStatus: '',
                           coolingTowerBlowoffValveStatus: '',
-                          coolingTowerChemicalName: '',
-                          coolingTowerChemicalQtyPerDay: '',
                           recordingFrequency: '',
                           operatorSign: '',
                           verifiedBy: '',
@@ -1794,11 +1750,6 @@ export default function ELogBookPage() {
                           compressorReturnTemp: '',
                           compressorPressure: '',
                           compressorFlow: '',
-                          equipmentName: '',
-                          chemicalName: '',
-                          solutionConcentration: '',
-                          waterQty: '',
-                          chemicalQty: '',
                         });
                         setCustomFormData({});
                       }}
@@ -1810,7 +1761,6 @@ export default function ELogBookPage() {
                       <SelectContent>
                         <SelectItem value="chiller">Chiller</SelectItem>
                         <SelectItem value="boiler">Boiler</SelectItem>
-                        <SelectItem value="chemical">Chemical</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1826,9 +1776,9 @@ export default function ELogBookPage() {
                               ...prev,
                               equipmentId: v,
                             }));
-                            if (formData.equipmentType === 'chiller') {
+            if (formData.equipmentType === 'chiller') {
                               const today = format(new Date(), 'yyyy-MM-dd');
-                              const key = user?.id ? `${user.id}_${today}` : '';
+                              const key = today;
                               const firstLog = key ? firstChillerLogByDay[key] : undefined;
                               if (firstLog) {
                                 const initialPumps = decodePumpPair(
@@ -1854,27 +1804,6 @@ export default function ELogBookPage() {
                                   coolingTowerBlowdownTimeMin:
                                     firstLog.coolingTowerBlowdownTimeMin != null
                                       ? String(firstLog.coolingTowerBlowdownTimeMin)
-                                      : '',
-                                  coolingTowerChemicalName:
-                                    firstLog.coolingTowerChemicalName || '',
-                                  coolingTowerChemicalQtyPerDay:
-                                    firstLog.coolingTowerChemicalQtyPerDay !== undefined &&
-                                    firstLog.coolingTowerChemicalQtyPerDay !== null
-                                      ? String(firstLog.coolingTowerChemicalQtyPerDay)
-                                      : '',
-                                  chilledWaterPumpChemicalName:
-                                    firstLog.chilledWaterPumpChemicalName || '',
-                                  chilledWaterPumpChemicalQtyKg:
-                                    firstLog.chilledWaterPumpChemicalQtyKg !== undefined &&
-                                    firstLog.chilledWaterPumpChemicalQtyKg !== null
-                                      ? String(firstLog.chilledWaterPumpChemicalQtyKg)
-                                      : '',
-                                  coolingTowerFanChemicalName:
-                                    firstLog.coolingTowerFanChemicalName || '',
-                                  coolingTowerFanChemicalQtyKg:
-                                    firstLog.coolingTowerFanChemicalQtyKg !== undefined &&
-                                    firstLog.coolingTowerFanChemicalQtyKg !== null
-                                      ? String(firstLog.coolingTowerFanChemicalQtyKg)
                                       : '',
                                 }));
                               }
@@ -1976,7 +1905,7 @@ export default function ELogBookPage() {
                     })()}
                     <fieldset disabled={!isReadingsApplicable} className={cn(!isReadingsApplicable && "opacity-60")}>
                     {/* Summary temperatures and pressures */}
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="mt-6 grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label className="flex items-center gap-2">
                           <Thermometer className="w-4 h-4" /> Chiller supply temp
@@ -2394,7 +2323,7 @@ export default function ELogBookPage() {
                     {/* Compressor / electrical section */}
                     <div className="mt-4 border-t pt-4 space-y-4">
                       <Label className="text-sm font-semibold">Compressor / Electrical</Label>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-8">
                         <div className="space-y-2">
                           <Label className="flex items-center gap-2">
                             <Gauge className="w-4 h-4" /> Chiller control signal (%)
@@ -2465,7 +2394,7 @@ export default function ELogBookPage() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-8">
                         <div className="space-y-2">
                           <Label className="flex items-center gap-2">
                             <Clock className="w-4 h-4" /> Compressor running time (min)
@@ -2540,7 +2469,7 @@ export default function ELogBookPage() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="mt-6 grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label className="flex items-center gap-2">
                           <Thermometer className="w-4 h-4" /> Cooling tower supply temp
@@ -2593,7 +2522,7 @@ export default function ELogBookPage() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="mt-6 grid grid-cols-2 gap-4">
                       <div className="space-y-2">
                         <Label className="flex items-center gap-2">
                           <Thermometer className="w-4 h-4" /> CT Differential temperature
@@ -3061,125 +2990,6 @@ export default function ELogBookPage() {
                             formData.coolingTowerFan2,
                             formData.coolingTowerFan3,
                           ].filter((s) => s === 'ON').length}
-                        </div>
-                      </div>
-
-                      {/* Cooling tower chemicals table - 3 columns matching physical sheet */}
-                      <div className="mt-4 space-y-3">
-                        <Label className="text-sm">
-                          Cooling tower chemicals to be added &amp; to be mentioned below in table
-                          column:
-                        </Label>
-
-                        {/* Column headers */}
-                        <div className="grid grid-cols-3 gap-4 text-sm font-semibold">
-                          <div>Cooling Tower-1</div>
-                          <div>Chilled Water Pump</div>
-                          <div>Cooling Tower Fan</div>
-                        </div>
-
-                        {/* Chemical names row */}
-                        <div className="grid grid-cols-3 gap-4">
-                          <div className="space-y-1">
-                            <Label className="text-xs">Chemical Name</Label>
-                            <Input
-                              type="text"
-                              value={formData.coolingTowerChemicalName}
-                              disabled={!canEditRunningSection}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  coolingTowerChemicalName: e.target.value,
-                                })
-                              }
-                              placeholder="e.g., CU450"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Chemical Name</Label>
-                            <Input
-                              type="text"
-                              value={formData.chilledWaterPumpChemicalName}
-                              disabled={!canEditRunningSection}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  chilledWaterPumpChemicalName: e.target.value,
-                                })
-                              }
-                              placeholder="e.g., C1810"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Chemical Name</Label>
-                            <Input
-                              type="text"
-                              value={formData.coolingTowerFanChemicalName}
-                              disabled={!canEditRunningSection}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  coolingTowerFanChemicalName: e.target.value,
-                                })
-                              }
-                              placeholder="e.g., C3003"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Quantities row */}
-                        <div className="grid grid-cols-3 gap-4">
-                          <div className="space-y-1">
-                            <Label className="text-xs">Quantity (Kg)</Label>
-                            <Input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={formData.coolingTowerChemicalQtyPerDay}
-                              disabled={!canEditRunningSection}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  coolingTowerChemicalQtyPerDay: e.target.value,
-                                })
-                              }
-                              placeholder="e.g., 0.27"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Quantity (Kg)</Label>
-                            <Input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={formData.chilledWaterPumpChemicalQtyKg}
-                              disabled={!canEditRunningSection}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  chilledWaterPumpChemicalQtyKg: e.target.value,
-                                })
-                              }
-                              placeholder="e.g., 0.32"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Quantity (Kg)</Label>
-                            <Input
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              value={formData.coolingTowerFanChemicalQtyKg}
-                              disabled={!canEditRunningSection}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  coolingTowerFanChemicalQtyKg: e.target.value,
-                                })
-                              }
-                              placeholder="e.g., 0.42"
-                            />
-                          </div>
                         </div>
                       </div>
 
@@ -3673,8 +3483,6 @@ export default function ELogBookPage() {
                             variant={
                               log.has_corrections && !log.corrects_id
                                 ? 'destructive'
-                                : log.corrects_id
-                                ? 'warning'
                                 : log.status === 'approved'
                                 ? 'success'
                                 : log.status === 'rejected'
@@ -3686,17 +3494,7 @@ export default function ELogBookPage() {
                           >
                             {log.has_corrections && !log.corrects_id
                               ? 'Rejected'
-                              : log.corrects_id
-                              ? 'Pending'
-                              : log.status === 'pending_secondary_approval' || log.status === 'pending'
-                              ? 'Pending'
-                              : log.status === 'rejected'
-                              ? 'Rejected'
-                              : log.status === 'approved'
-                              ? 'Approved'
-                              : log.status === 'draft'
-                              ? 'Draft'
-                              : log.status}
+                              : getStatusLabel(log.status)}
                           </Badge>
                           {log.corrects_id && (
                             <span className="text-[10px] text-amber-700 whitespace-nowrap">Correction entry</span>
@@ -3887,7 +3685,7 @@ export default function ELogBookPage() {
                 const pressureKeys = ['chillerWaterInletPressure', 'evapWaterInletPressure', 'evapWaterOutletPressure', 'condWaterInletPressure', 'condWaterOutletPressure'];
                 const flowKeys = ['chillerMakeupWaterFlow'];
                 const electricalKeys = ['chillerControlSignal', 'avgMotorCurrent', 'compressorRunningTimeMin', 'starterEnergyKwh'];
-                const otherKeys = ['coolingTowerBlowdownTimeMin', 'coolingTowerChemicalQtyPerDay', 'chilledWaterPumpChemicalQtyKg', 'coolingTowerFanChemicalQtyKg'];
+               const otherKeys = ['coolingTowerBlowdownTimeMin'];
                 const section = (title: string, keys: string[]) => {
                   const fields = CHILLER_LIST_FIELDS.filter((f) => keys.includes(f.key));
                   const items = fields.map(({ key, label, unit }) => {

@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from accounts.permissions import CanApproveReports, CanLogEntries
 from core.log_slot_utils import get_interval_for_equipment, get_slot_range
 from reports.utils import log_limit_change
+from reports.audit_helpers import log_object_create, log_object_delete, log_status_change
 
 from .models import FilterLog
 from .serializers import FilterLogSerializer
@@ -68,9 +69,21 @@ class FilterLogViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 {'detail': ['An entry for this equipment already exists for this time slot.']}
             )
-        serializer.save(
+        log = serializer.save(
             operator=self.request.user,
             operator_name=self.request.user.name or self.request.user.email,
+        )
+
+        # High-level lifecycle audit: creation event
+        log_object_create(
+            user=self.request.user,
+            object_type="filter_log",
+            object_id=str(log.id),
+            extra={
+                "equipment_id": log.equipment_id,
+                "status": log.status,
+                "timestamp": timezone.localtime(log.timestamp).isoformat() if log.timestamp else None,
+            },
         )
 
     def update(self, request, *args, **kwargs):
@@ -207,6 +220,7 @@ class FilterLogViewSet(viewsets.ModelViewSet):
         - Secondary approval must be by a different user than the rejector.
         """
         log = self.get_object()
+        old_status = log.status
         action_type = request.data.get('action', 'approve')
         remarks = (request.data.get('remarks') or '').strip()
 
@@ -260,6 +274,48 @@ class FilterLogViewSet(viewsets.ModelViewSet):
             'updated_at',
         ])
 
+        # Audit status transition
+        event_type = "log_update"
+        if action_type == "approve" and log.status == "approved":
+            event_type = "log_approved"
+        elif action_type == "reject":
+            event_type = "log_rejected"
+        log_status_change(
+            user=request.user,
+            object_type="filter_log",
+            object_id=str(log.id),
+            from_status=old_status,
+            to_status=log.status,
+            event_type=event_type,
+            extra={
+                "remarks": remarks,
+                "action": action_type,
+                "equipment_id": log.equipment_id,
+            },
+        )
+
         serializer = self.get_serializer(log)
         return Response(serializer.data)
+
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a filter log entry while recording the deletion in the audit trail.
+        """
+        instance = self.get_object()
+        log_id = str(instance.id)
+        equipment_id = instance.equipment_id
+
+        response = super().destroy(request, *args, **kwargs)
+
+        log_object_delete(
+            user=request.user,
+            object_type="filter_log",
+            object_id=log_id,
+            extra={
+                "equipment_id": equipment_id,
+            },
+        )
+
+        return response
 

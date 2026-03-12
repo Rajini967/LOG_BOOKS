@@ -12,6 +12,7 @@ from .serializers import (
 )
 from accounts.permissions import IsManagerOrSuperAdmin
 from accounts.models import UserRole
+from reports.audit_helpers import log_object_create, log_object_delete
 
 
 class LogbookSchemaViewSet(viewsets.ModelViewSet):
@@ -49,7 +50,19 @@ class LogbookSchemaViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Set created_by when creating a schema."""
-        serializer.save(created_by=self.request.user)
+        schema = serializer.save(created_by=self.request.user)
+
+        # High-level audit event for schema creation
+        log_object_create(
+            user=self.request.user,
+            object_type="logbook_schema",
+            object_id=str(schema.id),
+            extra={
+                "name": schema.name,
+                "client_id": schema.client_id,
+                "category": schema.category,
+            },
+        )
     
     @action(detail=True, methods=['post', 'get'], permission_classes=[IsManagerOrSuperAdmin])
     def assign_roles(self, request, pk=None):
@@ -113,8 +126,39 @@ class LogbookEntryViewSet(viewsets.ModelViewSet):
         return queryset.filter(schema_id__in=assigned_schemas)
     
     def perform_create(self, serializer):
-        """Set operator when creating an entry."""
-        serializer.save(
+        """Set operator when creating an entry and record creation in audit trail."""
+        entry = serializer.save(
             operator=self.request.user,
             operator_name=self.request.user.name or self.request.user.email
         )
+
+        log_object_create(
+            user=self.request.user,
+            object_type="logbook_entry",
+            object_id=str(entry.id),
+            extra={
+                "schema_id": entry.schema_id,
+                "status": entry.status,
+            },
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a logbook entry while recording the deletion in the audit trail.
+        """
+        instance = self.get_object()
+        entry_id = str(instance.id)
+        schema_id = instance.schema_id
+
+        response = super().destroy(request, *args, **kwargs)
+
+        log_object_delete(
+            user=request.user,
+            object_type="logbook_entry",
+            object_id=entry_id,
+            extra={
+                "schema_id": schema_id,
+            },
+        )
+
+        return response

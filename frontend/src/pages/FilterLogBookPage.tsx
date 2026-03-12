@@ -1948,16 +1948,12 @@ const FilterLogBookPage: React.FC = () => {
                             variant={
                               log.has_corrections && !log.corrects_id
                                 ? "destructive"
-                                : log.corrects_id
-                                ? "warning"
-                                : getStatusBadgeVariant(log.status)
+                              : getStatusBadgeVariant(log.status)
                             }
                             className="w-fit text-xs"
                           >
                             {log.has_corrections && !log.corrects_id
                               ? "Rejected"
-                              : log.corrects_id
-                              ? "Pending"
                               : getStatusLabel(log.status)}
                           </Badge>
                           {log.corrects_id && (

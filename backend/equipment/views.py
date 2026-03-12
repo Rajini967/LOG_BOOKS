@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
 from accounts.permissions import IsManagerOrSuperAdmin
+from reports.audit_helpers import log_object_create, log_object_delete, log_object_update, log_status_change
 
 from .models import Department, EquipmentCategory, Equipment
 from .serializers import (
@@ -28,6 +29,41 @@ class DepartmentViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsManagerOrSuperAdmin()]
         return [IsAuthenticated()]
 
+    def perform_create(self, serializer):
+        dept = serializer.save()
+        log_object_create(
+            user=self.request.user,
+            object_type="department",
+            object_id=str(dept.id),
+            extra={"name": dept.name},
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        old_name = instance.name
+        dept = serializer.save()
+        if old_name != dept.name:
+            log_object_update(
+                user=self.request.user,
+                object_type="department",
+                object_id=str(dept.id),
+                changes={"name": (old_name, dept.name)},
+                event_type="equipment_update",
+            )
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        dept_id = str(instance.id)
+        name = instance.name
+        response = super().destroy(request, *args, **kwargs)
+        log_object_delete(
+            user=request.user,
+            object_type="department",
+            object_id=dept_id,
+            extra={"name": name},
+        )
+        return response
+
 
 class EquipmentCategoryViewSet(viewsets.ModelViewSet):
     """CRUD for EquipmentCategory master."""
@@ -41,6 +77,31 @@ class EquipmentCategoryViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsManagerOrSuperAdmin()]
         return [IsAuthenticated()]
 
+    def perform_create(self, serializer):
+        cat = serializer.save()
+        log_object_create(
+            user=self.request.user,
+            object_type="equipment_category",
+            object_id=str(cat.id),
+            extra={"name": cat.name},
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        old = {"name": instance.name}
+        cat = serializer.save()
+        changes = {}
+        if old["name"] != cat.name:
+            changes["name"] = (old["name"], cat.name)
+        if changes:
+            log_object_update(
+                user=self.request.user,
+                object_type="equipment_category",
+                object_id=str(cat.id),
+                changes=changes,
+                event_type="equipment_update",
+            )
+
     def destroy(self, request, *args, **kwargs):
         """
         Prevent deleting categories that are in use by Equipment (PROTECT FK).
@@ -48,7 +109,15 @@ class EquipmentCategoryViewSet(viewsets.ModelViewSet):
         """
         instance: EquipmentCategory = self.get_object()
         try:
-            return super().destroy(request, *args, **kwargs)
+            name = instance.name
+            response = super().destroy(request, *args, **kwargs)
+            log_object_delete(
+                user=request.user,
+                object_type="equipment_category",
+                object_id=str(instance.id),
+                extra={"name": name},
+            )
+            return response
         except ProtectedError:
             return Response(
                 {
@@ -85,14 +154,59 @@ class EquipmentViewSet(viewsets.ModelViewSet):
             return [IsAuthenticated(), IsManagerOrSuperAdmin()]
         return [IsAuthenticated()]
 
+    def perform_create(self, serializer):
+        equipment = serializer.save()
+        log_object_create(
+            user=self.request.user,
+            object_type="equipment",
+            object_id=str(equipment.id),
+            extra={
+                "equipment_number": equipment.equipment_number,
+                "name": equipment.name,
+                "status": getattr(equipment, "status", None),
+            },
+        )
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        old_values = {
+            "equipment_number": instance.equipment_number,
+            "name": instance.name,
+            "status": getattr(instance, "status", None),
+        }
+        equipment = serializer.save()
+        changes = {}
+        for field in ["equipment_number", "name", "status"]:
+            before = old_values.get(field)
+            after = getattr(equipment, field, None)
+            if before != after:
+                changes[field] = (before, after)
+        if changes:
+            log_object_update(
+                user=self.request.user,
+                object_type="equipment",
+                object_id=str(equipment.id),
+                changes=changes,
+                event_type="equipment_update",
+            )
+
     def destroy(self, request, *args, **kwargs):
         """
         Prevent deleting equipment that is referenced by FilterAssignment (PROTECT FK).
         Return a clear 400 error instead of a 500 traceback.
         """
         instance = self.get_object()
+        equip_id = str(instance.id)
+        eq_number = instance.equipment_number
         try:
-            return super().destroy(request, *args, **kwargs)
+            response = super().destroy(request, *args, **kwargs)
+            log_object_delete(
+                user=request.user,
+                object_type="equipment",
+                object_id=equip_id,
+                extra={"equipment_number": eq_number},
+            )
+            return response
         except ProtectedError as e:
             # e.protected_objects contains the related objects blocking deletion
             related_names = {type(obj).__name__ for obj in (e.protected_objects or [])}
@@ -136,6 +250,7 @@ class EquipmentViewSet(viewsets.ModelViewSet):
                 }
             )
 
+        old_status = equipment.status
         if action_type == "approve":
             equipment.status = "approved"
         else:
@@ -144,6 +259,21 @@ class EquipmentViewSet(viewsets.ModelViewSet):
         equipment.approved_by = request.user
         equipment.approved_at = timezone.now()
         equipment.save(update_fields=["status", "approved_by", "approved_at", "updated_at"])
+
+        # Audit approval/rejection status change
+        event_type = "log_approved" if action_type == "approve" else "log_rejected"
+        log_status_change(
+            user=request.user,
+            object_type="equipment",
+            object_id=str(equipment.id),
+            from_status=old_status,
+            to_status=equipment.status,
+            event_type=event_type,
+            extra={
+                "equipment_number": equipment.equipment_number,
+                "action": action_type,
+            },
+        )
 
         serializer = self.get_serializer(equipment)
         return Response(serializer.data)

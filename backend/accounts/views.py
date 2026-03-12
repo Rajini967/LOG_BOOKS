@@ -132,6 +132,19 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
+            # Also write to centralized audit trail
+            try:
+                log_user_audit_event(
+                    "login",
+                    user,
+                    actor=user,
+                    field_name="session",
+                    old_value=None,
+                    new_value=f"manual_login from {ip_address}",
+                )
+            except Exception:
+                # Do not block login if audit logging fails
+                pass
         except Exception:
             pass
         # Password policy: force change flags for frontend
@@ -198,6 +211,19 @@ class LogoutView(APIView):
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
+                # Mirror logout in centralized audit trail
+                try:
+                    log_user_audit_event(
+                        "logout",
+                        request.user,
+                        actor=request.user,
+                        field_name="session",
+                        old_value=event_type,
+                        new_value=f"logout from {ip_address}",
+                    )
+                except Exception:
+                    # Do not block logout if audit logging fails
+                    pass
             except Exception:
                 # Do not block logout if logging fails
                 pass
@@ -450,9 +476,20 @@ class UserViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(instance, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.context['request'] = request
+        serializer.context["request"] = request
         serializer.save()
-        
+
+        # Record a high-level user update event in the audit trail
+        try:
+            log_user_audit_event(
+                "user_updated",
+                instance,
+                actor=request.user,
+                field_name="user",
+            )
+        except Exception:
+            pass
+
         return Response(UserSerializer(instance).data)
     
     def destroy(self, request, *args, **kwargs):
@@ -483,7 +520,20 @@ class UserViewSet(viewsets.ModelViewSet):
         
         # Soft delete
         instance.soft_delete()
-        
+
+        # Audit soft-delete as a user lifecycle event
+        try:
+            log_user_audit_event(
+                "user_updated",
+                instance,
+                actor=request.user,
+                field_name="deleted",
+                old_value="active",
+                new_value="deleted",
+            )
+        except Exception:
+            pass
+
         return Response(
             {'message': 'User deleted successfully.'},
             status=status.HTTP_200_OK

@@ -9,6 +9,7 @@ from .models import ChillerLog, ChillerEquipmentStatusAudit, ChillerEquipmentLim
 from .serializers import ChillerLogSerializer, ChillerEquipmentLimitSerializer
 from accounts.permissions import CanLogEntries, CanApproveReports, IsSuperAdminOrManager
 from reports.utils import log_limit_change
+from reports.audit_helpers import log_object_create, log_object_delete, log_status_change
 from django.db.models import Sum
 from datetime import datetime, date
 import calendar
@@ -44,17 +45,16 @@ def _validate_chiller_daily_limits(
         w1=Sum('daily_water_consumption_ct1_liters'),
         w2=Sum('daily_water_consumption_ct2_liters'),
         w3=Sum('daily_water_consumption_ct3_liters'),
-        c1=Sum('cooling_tower_chemical_qty_per_day'),
-        c2=Sum('chilled_water_pump_chemical_qty_kg'),
-        c3=Sum('cooling_tower_fan_chemical_qty_kg'),
     )
     total_power = (agg['power'] or 0) + (power_kwh or 0)
     total_w1 = (agg['w1'] or 0) + (water_ct1 or 0)
     total_w2 = (agg['w2'] or 0) + (water_ct2 or 0)
     total_w3 = (agg['w3'] or 0) + (water_ct3 or 0)
-    total_c1 = (agg['c1'] or 0) + (chemical_ct1_kg or 0)
-    total_c2 = (agg['c2'] or 0) + (chemical_ct2_kg or 0)
-    total_c3 = (agg['c3'] or 0) + (chemical_ct3_kg or 0)
+    # Chemical consumption is currently not tracked per-log in the chiller model,
+    # so we only use the values explicitly passed in (typically 0.0).
+    total_c1 = chemical_ct1_kg or 0
+    total_c2 = chemical_ct2_kg or 0
+    total_c3 = chemical_ct3_kg or 0
 
     errors = []
     if limit.daily_power_limit_kw is not None and total_power > limit.daily_power_limit_kw:
@@ -152,13 +152,12 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
         overrides = {}
         changes = []
 
-        # Baseline pump/fan status is based on the operator's first reading of the day
-        # (not per equipment). Subsequent entries by the same operator inherit these values
-        # when omitted and require remarks if changed.
+        # Baseline pump/fan status is based on the first chiller reading of the day
+        # across all operators and equipment. Subsequent entries for the same day
+        # inherit these values when omitted and require remarks if changed.
         today = timezone.localdate()
         first_log = (
             ChillerLog.objects.filter(
-                operator=self.request.user,
                 timestamp__date=today,
             )
             .order_by('timestamp')
@@ -206,9 +205,9 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
                 water_ct1=validated.get('daily_water_consumption_ct1_liters') or 0,
                 water_ct2=validated.get('daily_water_consumption_ct2_liters') or 0,
                 water_ct3=validated.get('daily_water_consumption_ct3_liters') or 0,
-                chemical_ct1_kg=validated.get('cooling_tower_chemical_qty_per_day') or 0,
-                chemical_ct2_kg=validated.get('chilled_water_pump_chemical_qty_kg') or 0,
-                chemical_ct3_kg=validated.get('cooling_tower_fan_chemical_qty_kg') or 0,
+                chemical_ct1_kg=0,
+                chemical_ct2_kg=0,
+                chemical_ct3_kg=0,
             )
             if not ok:
                 raise ValidationError({'detail': limit_errors})
@@ -246,6 +245,19 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
                     changed_by=self.request.user,
                 )
 
+        # High-level lifecycle audit: log creation event
+        log_object_create(
+            user=self.request.user,
+            object_type="chiller_log",
+            object_id=str(log.id),
+            extra={
+                "equipment_id": log.equipment_id,
+                "site_id": log.site_id,
+                "status": log.status,
+                "timestamp": timezone.localtime(log.timestamp).isoformat() if log.timestamp else None,
+            },
+        )
+
     def perform_update(self, serializer):
         """Validate daily limits before saving update."""
         instance = serializer.instance
@@ -262,9 +274,9 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
                 water_ct1=_get('daily_water_consumption_ct1_liters') or 0,
                 water_ct2=_get('daily_water_consumption_ct2_liters') or 0,
                 water_ct3=_get('daily_water_consumption_ct3_liters') or 0,
-                chemical_ct1_kg=_get('cooling_tower_chemical_qty_per_day') or 0,
-                chemical_ct2_kg=_get('chilled_water_pump_chemical_qty_kg') or 0,
-                chemical_ct3_kg=_get('cooling_tower_fan_chemical_qty_kg') or 0,
+                chemical_ct1_kg=0,
+                chemical_ct2_kg=0,
+                chemical_ct3_kg=0,
                 exclude_log_id=instance.id,
             )
             if not ok:
@@ -330,12 +342,6 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
             'daily_water_consumption_ct1_liters',
             'daily_water_consumption_ct2_liters',
             'daily_water_consumption_ct3_liters',
-            'cooling_tower_chemical_name',
-            'cooling_tower_chemical_qty_per_day',
-            'chilled_water_pump_chemical_name',
-            'chilled_water_pump_chemical_qty_kg',
-            'cooling_tower_fan_chemical_name',
-            'cooling_tower_fan_chemical_qty_kg',
             'recording_frequency',
             'operator_sign',
             'verified_by',
@@ -583,12 +589,6 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
             'daily_water_consumption_ct1_liters',
             'daily_water_consumption_ct2_liters',
             'daily_water_consumption_ct3_liters',
-            'cooling_tower_chemical_name',
-            'cooling_tower_chemical_qty_per_day',
-            'chilled_water_pump_chemical_name',
-            'chilled_water_pump_chemical_qty_kg',
-            'cooling_tower_fan_chemical_name',
-            'cooling_tower_fan_chemical_qty_kg',
             'recording_frequency',
             'operator_sign',
             'verified_by',
@@ -628,6 +628,7 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         """Approve or reject a chiller log. Handles primary approval, secondary approval (after correction), and reject."""
         log = self.get_object()
+        old_status = log.status
         action_type = request.data.get('action', 'approve')
         remarks = (request.data.get('remarks') or '').strip()
         
@@ -686,6 +687,27 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
         if remarks:
             log.comment = remarks
         log.save()
+
+        # Audit status transition in centralized audit trail
+        event_type = "log_update"
+        if action_type == "approve" and log.status == "approved":
+            event_type = "log_approved"
+        elif action_type == "reject":
+            event_type = "log_rejected"
+        log_status_change(
+            user=request.user,
+            object_type="chiller_log",
+            object_id=str(log.id),
+            from_status=old_status,
+            to_status=log.status,
+            event_type=event_type,
+            extra={
+                "remarks": remarks,
+                "action": action_type,
+                "equipment_id": log.equipment_id,
+                "site_id": log.site_id,
+            },
+        )
         
         # Create report entry when approved (primary or secondary)
         if action_type == 'approve' and log.status == 'approved':
@@ -705,6 +727,30 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(log)
         return Response(serializer.data)
+
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a chiller log entry while recording the deletion in the audit trail.
+        """
+        instance = self.get_object()
+        log_id = str(instance.id)
+        equipment_id = instance.equipment_id
+        site_id = instance.site_id
+
+        response = super().destroy(request, *args, **kwargs)
+
+        log_object_delete(
+            user=request.user,
+            object_type="chiller_log",
+            object_id=log_id,
+            extra={
+                "equipment_id": equipment_id,
+                "site_id": site_id,
+            },
+        )
+
+        return response
 
 
 class ChillerEquipmentLimitViewSet(viewsets.ModelViewSet):

@@ -12,6 +12,7 @@ from .models import BoilerLog, BoilerEquipmentLimit, BoilerDashboardConfig
 from .serializers import BoilerLogSerializer, BoilerEquipmentLimitSerializer
 from accounts.permissions import CanLogEntries, CanApproveReports, IsSuperAdminOrManager
 from reports.utils import log_limit_change
+from reports.audit_helpers import log_object_create, log_object_delete, log_status_change
 
 
 def _validate_boiler_daily_limits(
@@ -120,7 +121,7 @@ class BoilerLogViewSet(viewsets.ModelViewSet):
         return qs.order_by('timestamp')
 
     def perform_create(self, serializer):
-        """Set operator when creating a log."""
+        """Set operator when creating a log and record creation in audit trail."""
         validated = serializer.validated_data
         equipment_id = validated.get('equipment_id')
         activity_type = validated.get('activity_type') or 'operation'
@@ -150,9 +151,22 @@ class BoilerLogViewSet(viewsets.ModelViewSet):
             )
             if not ok:
                 raise ValidationError({'detail': limit_errors})
-        serializer.save(
+        log = serializer.save(
             operator=self.request.user,
             operator_name=self.request.user.name or self.request.user.email
+        )
+
+        # High-level lifecycle audit: log creation event
+        log_object_create(
+            user=self.request.user,
+            object_type="boiler_log",
+            object_id=str(log.id),
+            extra={
+                "equipment_id": log.equipment_id,
+                "site_id": log.site_id,
+                "status": log.status,
+                "timestamp": timezone.localtime(log.timestamp).isoformat() if log.timestamp else None,
+            },
         )
 
     def perform_update(self, serializer):
@@ -538,6 +552,7 @@ class BoilerLogViewSet(viewsets.ModelViewSet):
     def approve(self, request, pk=None):
         """Approve or reject a boiler log. Handles primary approval, secondary approval (after correction), and reject."""
         log = self.get_object()
+        old_status = log.status
         action_type = request.data.get('action', 'approve')
         remarks = (request.data.get('remarks') or '').strip()
         
@@ -595,6 +610,27 @@ class BoilerLogViewSet(viewsets.ModelViewSet):
         if remarks:
             log.comment = remarks
         log.save()
+
+        # Audit status transition
+        event_type = "log_update"
+        if action_type == "approve" and log.status == "approved":
+            event_type = "log_approved"
+        elif action_type == "reject":
+            event_type = "log_rejected"
+        log_status_change(
+            user=request.user,
+            object_type="boiler_log",
+            object_id=str(log.id),
+            from_status=old_status,
+            to_status=log.status,
+            event_type=event_type,
+            extra={
+                "remarks": remarks,
+                "action": action_type,
+                "equipment_id": log.equipment_id,
+                "site_id": log.site_id,
+            },
+        )
         
         if action_type == 'approve' and log.status == 'approved':
             from reports.utils import create_report_entry
@@ -613,6 +649,30 @@ class BoilerLogViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(log)
         return Response(serializer.data)
+
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a boiler log entry while recording the deletion in the audit trail.
+        """
+        instance = self.get_object()
+        log_id = str(instance.id)
+        equipment_id = instance.equipment_id
+        site_id = instance.site_id
+
+        response = super().destroy(request, *args, **kwargs)
+
+        log_object_delete(
+            user=request.user,
+            object_type="boiler_log",
+            object_id=log_id,
+            extra={
+                "equipment_id": equipment_id,
+                "site_id": site_id,
+            },
+        )
+
+        return response
 
 
 class BoilerEquipmentLimitViewSet(viewsets.ModelViewSet):

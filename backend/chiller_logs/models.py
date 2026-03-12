@@ -185,46 +185,6 @@ class ChillerLog(models.Model):
         null=True,
         help_text="Cooling tower 3 daily water consumption (liters)"
     )
-    # Cooling tower chemicals table - per equipment column
-    # Column 1 - Cooling Tower-1
-    cooling_tower_chemical_name = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Cooling tower-1 chemical name"
-    )
-    cooling_tower_chemical_qty_per_day = models.FloatField(
-        validators=[MinValueValidator(0)],
-        blank=True,
-        null=True,
-        help_text="Cooling tower-1 chemical quantity added per day (kg)"
-    )
-    # Column 2 - Chilled Water Pump
-    chilled_water_pump_chemical_name = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Chilled water pump chemical name"
-    )
-    chilled_water_pump_chemical_qty_kg = models.FloatField(
-        validators=[MinValueValidator(0)],
-        blank=True,
-        null=True,
-        help_text="Chilled water pump chemical quantity added per day (kg)"
-    )
-    # Column 3 - Cooling Tower Fan
-    cooling_tower_fan_chemical_name = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        help_text="Cooling tower fan chemical name"
-    )
-    cooling_tower_fan_chemical_qty_kg = models.FloatField(
-        validators=[MinValueValidator(0)],
-        blank=True,
-        null=True,
-        help_text="Cooling tower fan chemical quantity added per day (kg)"
-    )
     recording_frequency = models.CharField(
         max_length=100,
         blank=True,

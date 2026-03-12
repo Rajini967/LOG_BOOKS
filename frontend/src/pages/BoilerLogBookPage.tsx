@@ -130,6 +130,21 @@ interface BoilerLog {
   has_corrections?: boolean;
 }
 
+const getStatusLabel = (status: BoilerLog["status"]) => {
+  switch (status) {
+    case "approved":
+      return "Approved";
+    case "rejected":
+      return "Rejected";
+    case "pending_secondary_approval":
+    case "pending":
+      return "Pending";
+    case "draft":
+    default:
+      return "Draft";
+  }
+};
+
 const BoilerLogBookPage: React.FC = () => {
   const { user, sessionSettings } = useAuth();
   const [logs, setLogs] = useState<BoilerLog[]>([]);
@@ -1574,8 +1589,6 @@ const BoilerLogBookPage: React.FC = () => {
                           variant={
                             log.has_corrections && !log.corrects_id
                               ? "destructive"
-                              : log.corrects_id
-                              ? "warning"
                               : log.status === "approved"
                               ? "success"
                               : log.status === "rejected"
@@ -1587,17 +1600,7 @@ const BoilerLogBookPage: React.FC = () => {
                         >
                           {log.has_corrections && !log.corrects_id
                             ? "Rejected"
-                            : log.corrects_id
-                            ? "Pending"
-                            : log.status === "pending_secondary_approval" || log.status === "pending"
-                            ? "Pending"
-                            : log.status === "rejected"
-                            ? "Rejected"
-                            : log.status === "approved"
-                            ? "Approved"
-                            : log.status === "draft"
-                            ? "Draft"
-                            : log.status}
+                            : getStatusLabel(log.status)}
                         </Badge>
                         {log.corrects_id && (
                           <span className="text-[10px] text-amber-700 whitespace-nowrap">Correction entry</span>
