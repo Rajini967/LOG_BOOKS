@@ -54,17 +54,6 @@ interface CategoryOption {
 
 type LogEntryIntervalType = "hourly" | "shift" | "daily";
 
-function intervalToMinutes(
-  interval?: LogEntryIntervalType | null,
-  shiftHours?: number | null
-): number | null {
-  if (!interval) return null;
-  if (interval === "hourly") return 60;
-  if (interval === "daily") return 24 * 60;
-  if (interval === "shift") return Math.max(1, shiftHours ?? 8) * 60;
-  return null;
-}
-
 interface Equipment {
   id: string;
   equipment_number: string;
@@ -80,7 +69,6 @@ interface Equipment {
   is_active: boolean;
   status?: "pending" | "approved" | "rejected";
   log_entry_interval?: LogEntryIntervalType | null;
-  tolerance_minutes?: number | null;
   shift_duration_hours?: number | null;
 }
 
@@ -105,7 +93,6 @@ export default function EquipmentListPage() {
     category: "",
     is_active: true,
     log_entry_interval: "" as "" | LogEntryIntervalType,
-    tolerance_minutes: "" as "" | number,
     shift_duration_hours: "" as "" | number,
   });
 
@@ -158,7 +145,6 @@ export default function EquipmentListPage() {
       category: "",
       is_active: true,
       log_entry_interval: "",
-      tolerance_minutes: "",
       shift_duration_hours: "",
     });
     setIsEditMode(false);
@@ -187,7 +173,6 @@ export default function EquipmentListPage() {
       category: item.category,
       is_active: item.is_active ?? true,
       log_entry_interval: (item.log_entry_interval as LogEntryIntervalType) || "",
-      tolerance_minutes: item.tolerance_minutes ?? "",
       shift_duration_hours: item.shift_duration_hours ?? "",
     });
     setIsDialogOpen(true);
@@ -257,13 +242,6 @@ export default function EquipmentListPage() {
         return;
       }
     }
-    if (formData.tolerance_minutes !== "") {
-      const tol = Number(formData.tolerance_minutes);
-      if (!Number.isFinite(tol) || tol < 0) {
-        toast.error("Tolerance must be 0 or greater (minutes).");
-        return;
-      }
-    }
 
     setIsLoading(true);
     try {
@@ -277,16 +255,12 @@ export default function EquipmentListPage() {
       };
       if (formData.log_entry_interval) {
         payload.log_entry_interval = formData.log_entry_interval;
-        payload.tolerance_minutes =
-          formData.tolerance_minutes === "" ? 0 : Math.floor(Number(formData.tolerance_minutes));
         payload.shift_duration_hours =
           formData.log_entry_interval === "shift" && formData.shift_duration_hours !== ""
             ? formData.shift_duration_hours
             : null;
       } else {
         payload.log_entry_interval = null;
-        payload.tolerance_minutes =
-          formData.tolerance_minutes === "" ? 0 : Math.floor(Number(formData.tolerance_minutes));
         payload.shift_duration_hours = null;
       }
 
@@ -439,7 +413,7 @@ export default function EquipmentListPage() {
                   Add Equipment
                 </Button>
               </DialogTrigger>
-              <DialogContent className="sm:max-w-[680px]">
+              <DialogContent className="sm:max-w-[520px]">
                 <DialogHeader>
                   <DialogTitle className="flex items-center gap-2">
                     <Wrench className="w-5 h-5" />
@@ -560,78 +534,48 @@ export default function EquipmentListPage() {
                   </div>
 
                   <div className="space-y-2 pt-2 border-t border-border">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-                      <div className="space-y-2">
-                        <Label>Log entry interval</Label>
-                        <Select
-                          value={formData.log_entry_interval || "__none__"}
-                          onValueChange={(v) =>
-                            setFormData((prev) => ({
-                              ...prev,
-                              log_entry_interval: v === "__none__" ? "" : (v as LogEntryIntervalType),
-                              shift_duration_hours: v === "shift" ? prev.shift_duration_hours : "",
-                            }))
-                          }
-                        >
-                          <SelectTrigger className="h-8">
-                            <SelectValue placeholder="Use global default" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">Use global default</SelectItem>
-                            <SelectItem value="hourly">Hourly</SelectItem>
-                            <SelectItem value="shift">Shift</SelectItem>
-                            <SelectItem value="daily">Daily</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="tolerance_minutes">Tolerance (± minutes)</Label>
+                    <Label>Log entry interval</Label>
+                    <Select
+                      value={formData.log_entry_interval || "__none__"}
+                      onValueChange={(v) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          log_entry_interval: v === "__none__" ? "" : (v as LogEntryIntervalType),
+                          shift_duration_hours: v === "shift" ? prev.shift_duration_hours : "",
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Use global default" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Use global default</SelectItem>
+                        <SelectItem value="hourly">Hourly</SelectItem>
+                        <SelectItem value="shift">Shift</SelectItem>
+                        <SelectItem value="daily">Daily</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Override the global log entry interval for this equipment. Empty = use Settings default.
+                    </p>
+                    {formData.log_entry_interval === "shift" && (
+                      <div className="space-y-1 pt-2">
+                        <Label htmlFor="shift_duration_hours">Shift duration (hours)</Label>
                         <Input
-                          id="tolerance_minutes"
+                          id="shift_duration_hours"
                           type="number"
-                          min={0}
-                          step={1}
-                          className="h-8"
-                          value={formData.tolerance_minutes === "" ? "" : formData.tolerance_minutes}
+                          min={1}
+                          max={24}
+                          value={formData.shift_duration_hours === "" ? "" : formData.shift_duration_hours}
                           onChange={(e) => {
                             const v = e.target.value;
                             setFormData((prev) => ({
                               ...prev,
-                              tolerance_minutes: v === "" ? "" : Math.max(0, parseInt(v, 10) || 0),
+                              shift_duration_hours: v === "" ? "" : parseInt(v, 10) || 8,
                             }));
                           }}
-                          placeholder="e.g. 15"
+                          placeholder="e.g. 8"
                         />
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-muted-foreground">
-                      Interval/tolerance apply per equipment. Empty interval = Settings default. Tolerance default 0 means exact due time.
-                    </p>
-
-                    {formData.log_entry_interval === "shift" && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <Label htmlFor="shift_duration_hours">Shift duration (hours)</Label>
-                          <Input
-                            id="shift_duration_hours"
-                            type="number"
-                            min={1}
-                            max={24}
-                            className="h-8"
-                            value={formData.shift_duration_hours === "" ? "" : formData.shift_duration_hours}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setFormData((prev) => ({
-                                ...prev,
-                                shift_duration_hours: v === "" ? "" : parseInt(v, 10) || 8,
-                              }));
-                            }}
-                            placeholder="e.g. 8"
-                          />
-                        </div>
-                        <div />
                       </div>
                     )}
                   </div>
@@ -703,12 +647,6 @@ export default function EquipmentListPage() {
                     Capacity
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Log Interval
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                    Tolerance (± min)
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     Status
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
@@ -720,7 +658,7 @@ export default function EquipmentListPage() {
                 {equipment.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={6}
                       className="px-4 py-10 text-center text-muted-foreground"
                     >
                       No equipment found. Use &quot;Add Equipment&quot; to
@@ -751,20 +689,6 @@ export default function EquipmentListPage() {
                       </td>
                       <td className="px-4 py-3 text-sm">
                         {item.capacity || "—"}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        {(() => {
-                          const mins = intervalToMinutes(
-                            item.log_entry_interval ?? null,
-                            item.shift_duration_hours ?? null
-                          );
-                          return mins != null ? `${mins} min` : "—";
-                        })()}
-                      </td>
-                      <td className="px-4 py-3 text-sm">
-                        {typeof item.tolerance_minutes === "number"
-                          ? `±${item.tolerance_minutes}`
-                          : "—"}
                       </td>
                       <td className="px-4 py-3">
                         <Badge

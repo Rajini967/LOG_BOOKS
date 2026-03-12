@@ -53,7 +53,6 @@ class EquipmentSerializer(serializers.ModelSerializer):
             "is_active",
             "status",
             "log_entry_interval",
-            "tolerance_minutes",
             "shift_duration_hours",
             "created_by",
             "created_by_name",
@@ -107,12 +106,6 @@ class EquipmentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"shift_duration_hours": "Shift duration must be between 1 and 24 hours when interval is 'shift'."}
                 )
-
-        tolerance_minutes = attrs.get("tolerance_minutes")
-        if tolerance_minutes is None and self.instance is not None:
-            tolerance_minutes = getattr(self.instance, "tolerance_minutes", 0)
-        if tolerance_minutes is not None and tolerance_minutes < 0:
-            raise serializers.ValidationError({"tolerance_minutes": "Tolerance must be greater than or equal to 0."})
 
         return super().validate(attrs)
 

@@ -4,12 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
-from core.log_slot_utils import (
-    get_interval_for_equipment,
-    get_slot_range,
-    get_tolerance_minutes_for_equipment,
-    compute_log_entry_window,
-)
+from core.log_slot_utils import get_interval_for_equipment, get_slot_range
 from .models import ChillerLog, ChillerEquipmentStatusAudit, ChillerEquipmentLimit, ChillerDashboardConfig
 from .serializers import ChillerLogSerializer, ChillerEquipmentLimitSerializer
 from accounts.permissions import CanLogEntries, CanApproveReports, IsSuperAdminOrManager
@@ -130,34 +125,6 @@ class ChillerLogViewSet(viewsets.ModelViewSet):
         equipment_id = validated.get('equipment_id')
         activity_type = validated.get('activity_type') or 'operation'
         timestamp = validated.get('timestamp') or timezone.now()
-
-        # Too-early enforcement (± tolerance window) based on last entry time + interval.
-        try:
-            last_log = (
-                ChillerLog.objects.filter(equipment_id=equipment_id)
-                .exclude(timestamp__isnull=True)
-                .order_by("-timestamp")
-                .first()
-            )
-            if last_log and last_log.timestamp:
-                interval, shift_hours = get_interval_for_equipment(equipment_id or '', 'chiller')
-                tolerance_minutes = get_tolerance_minutes_for_equipment(equipment_id or "", "chiller")
-                window = compute_log_entry_window(last_log.timestamp, interval, shift_hours, tolerance_minutes)
-                if window:
-                    ts = timestamp
-                    if timezone.is_naive(ts):
-                        ts = timezone.make_aware(ts, timezone.get_current_timezone())
-                    if ts < window["start_window"]:
-                        start_str = timezone.localtime(window["start_window"]).strftime("%H:%M")
-                        raise ValidationError(
-                            {"detail": [f"Log entry is too early. Allowed entry time starts at {start_str}."]}
-                        )
-        except ValidationError:
-            raise
-        except Exception:
-            # Do not block logging if tolerance check fails unexpectedly
-            pass
-
         interval, shift_hours = get_interval_for_equipment(equipment_id or '', 'chiller')
         slot_start, slot_end = get_slot_range(timestamp, interval, shift_hours)
         if ChillerLog.objects.filter(

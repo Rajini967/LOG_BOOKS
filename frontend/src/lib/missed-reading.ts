@@ -15,11 +15,6 @@ export interface EquipmentMissInfo {
   equipmentName?: string;
   lastTimestamp: Date | null;
   nextDue: Date | null;
-  /** When provided, represents the expected entry time (same as nextDue). */
-  expectedTime?: Date | null;
-  toleranceMinutes?: number;
-  startWindow?: Date | null;
-  endWindow?: Date | null;
   isMissed: boolean;
   interval: LogEntryIntervalType;
   shiftHours: number;

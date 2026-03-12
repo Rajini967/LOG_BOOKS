@@ -40,7 +40,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { EntryIntervalBadge } from "@/components/logbook/EntryIntervalBadge";
 import { MissedReadingPopup } from "@/components/logbook/MissedReadingPopup";
-import { getNextDueAndMissed, type EquipmentMissInfo } from "@/lib/missed-reading";
+import { getNextDueAndMissed } from "@/lib/missed-reading";
 import { MaintenanceTimingsSection } from "@/components/logbook/MaintenanceTimingsSection";
 import type { MaintenanceTimingsValue } from "@/types/maintenance-timings";
 
@@ -135,13 +135,6 @@ const BoilerLogBookPage: React.FC = () => {
   const [logs, setLogs] = useState<BoilerLog[]>([]);
   const [showMissedReadingPopup, setShowMissedReadingPopup] = useState(false);
   const [missedReadingNextDue, setMissedReadingNextDue] = useState<Date | null>(null);
-  const [missedEquipments, setMissedEquipments] = useState<EquipmentMissInfo[] | null>(null);
-  const [scheduleStatusRows, setScheduleStatusRows] = useState<any[]>([]);
-  const [scheduleStatusLoading, setScheduleStatusLoading] = useState(false);
-  const [earlyEntryPopup, setEarlyEntryPopup] = useState<{ open: boolean; message: string }>({
-    open: false,
-    message: "",
-  });
   const [filteredLogs, setFilteredLogs] = useState<BoilerLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -409,69 +402,26 @@ const BoilerLogBookPage: React.FC = () => {
     };
   }, [formData.equipmentId]);
 
-  // Load schedule status rows (interval/tolerance/window state)
   useEffect(() => {
-    let cancelled = false;
-    setScheduleStatusLoading(true);
-    equipmentAPI
-      .scheduledStatus("boiler")
-      .then((res: any) => {
-        if (cancelled) return;
-        setScheduleStatusRows(Array.isArray(res?.rows) ? res.rows : []);
-      })
-      .catch(() => {
-        if (!cancelled) setScheduleStatusRows([]);
-      })
-      .finally(() => {
-        if (!cancelled) setScheduleStatusLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [logs.length]);
-
-  // Delay popup based on tolerance-window status
-  useEffect(() => {
-    const delayed = (scheduleStatusRows || []).filter((r: any) => r?.state === "delayed");
-    if (delayed.length === 0) {
-      setMissedEquipments(null);
+    if (!sessionSettings?.log_entry_interval || logs.length === 0) return;
+    const latest = logs[0];
+    const lastTs = latest?.timestamp
+      ? latest.timestamp instanceof Date
+        ? latest.timestamp
+        : new Date(latest.timestamp)
+      : null;
+    const eq = equipmentOptions.find((e) => e.equipment_number === latest?.equipmentId);
+    const interval = (eq?.log_entry_interval || sessionSettings.log_entry_interval) as "hourly" | "shift" | "daily";
+    const shiftHours = eq?.shift_duration_hours ?? sessionSettings.shift_duration_hours ?? 8;
+    const { nextDue, isMissed } = getNextDueAndMissed(lastTs, interval, shiftHours);
+    if (isMissed && nextDue) {
+      setMissedReadingNextDue(nextDue);
+      setShowMissedReadingPopup(true);
+    } else {
       setShowMissedReadingPopup(false);
       setMissedReadingNextDue(null);
-      return;
     }
-    const list: EquipmentMissInfo[] = delayed.map((r: any) => {
-      const equipmentId = String(r.equipment_number || "");
-      const equipmentName = r.name ? String(r.name) : undefined;
-      const lastTimestamp = r.last_entry ? new Date(r.last_entry) : null;
-      const expected = r.expected_entry ? new Date(r.expected_entry) : null;
-      const startWindow = r.start_window ? new Date(r.start_window) : null;
-      const endWindow = r.end_window ? new Date(r.end_window) : null;
-      const tol = typeof r.tolerance_minutes === "number" ? r.tolerance_minutes : undefined;
-      const interval = (r.interval || "hourly") as any;
-      const shiftHours = typeof r.shift_duration_hours === "number" ? r.shift_duration_hours : 8;
-      return {
-        equipmentId,
-        equipmentName,
-        lastTimestamp,
-        nextDue: expected,
-        expectedTime: expected,
-        toleranceMinutes: tol,
-        startWindow,
-        endWindow,
-        isMissed: true,
-        interval,
-        shiftHours,
-      };
-    });
-    setMissedEquipments(list);
-    const firstExpected =
-      list
-        .map((m) => m.nextDue)
-        .filter((d): d is Date => !!d)
-        .sort((a, b) => a.getTime() - b.getTime())[0] || null;
-    setMissedReadingNextDue(firstExpected);
-    setShowMissedReadingPopup(true);
-  }, [scheduleStatusRows]);
+  }, [logs, sessionSettings, equipmentOptions]);
 
   const uniqueCheckedBy = useMemo(() => {
     if (!logs.length) return [];
@@ -579,30 +529,6 @@ const BoilerLogBookPage: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      // Too-early enforcement (UI-side) using tolerance-window status
-      try {
-        const selectedIdentifier = formData.equipmentId || "";
-        if (selectedIdentifier) {
-          const row = (scheduleStatusRows || []).find(
-            (r: any) => String(r?.equipment_number || "") === selectedIdentifier,
-          );
-          if (row?.state === "too_early") {
-            const start = row?.start_window ? new Date(row.start_window) : null;
-            const startStr =
-              start && !Number.isNaN(start.getTime())
-                ? format(start, "HH:mm")
-                : "the allowed window";
-            setEarlyEntryPopup({
-              open: true,
-              message: `Log entry is too early.\nAllowed entry time starts at ${startStr}.`,
-            });
-            return;
-          }
-        }
-      } catch {
-        // ignore; backend will enforce
-      }
-
       if (!formData.equipmentId) {
         toast.error("Please select Equipment ID.");
         return;
@@ -967,39 +893,17 @@ const BoilerLogBookPage: React.FC = () => {
       <div className="px-4 pt-0">
         <EntryIntervalBadge />
       </div>
-
       {showMissedReadingPopup && missedReadingNextDue && (
         <MissedReadingPopup
           open={showMissedReadingPopup}
           onClose={() => {
             setShowMissedReadingPopup(false);
             setMissedReadingNextDue(null);
-            setMissedEquipments(null);
           }}
           logTypeLabel="Boiler"
           nextDue={missedReadingNextDue}
-          equipmentList={missedEquipments ?? undefined}
         />
       )}
-
-      <AlertDialog
-        open={earlyEntryPopup.open}
-        onOpenChange={(open) => setEarlyEntryPopup((prev) => ({ ...prev, open }))}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Log entry is too early</AlertDialogTitle>
-            <AlertDialogDescription className="whitespace-pre-line">
-              {earlyEntryPopup.message}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setEarlyEntryPopup({ open: false, message: "" })}>
-              OK
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
       <main className="p-4 space-y-4">
         <div className="flex justify-between items-center">
           <div>
@@ -1196,34 +1100,13 @@ const BoilerLogBookPage: React.FC = () => {
                         <SelectTrigger>
                           <SelectValue placeholder="Select equipment" />
                         </SelectTrigger>
-                        <SelectContent className="z-[100] min-w-[340px] w-[var(--radix-select-trigger-width)]">
-                          {equipmentOptions.map((eq) => {
-                            const st = (scheduleStatusRows || []).find(
-                              (r: any) => String(r?.equipment_number || "") === eq.equipment_number,
-                            );
-                            const state = String(st?.state || "");
-                            const suffix =
-                              state === "delayed"
-                                ? " (Delayed)"
-                                : state === "near_delay"
-                                ? " (Near delay)"
-                                : state === "too_early"
-                                ? " (Too early)"
-                                : "";
-                            const itemClass =
-                              state === "delayed"
-                                ? "bg-red-50 data-[highlighted]:bg-red-100 data-[state=checked]:bg-red-100"
-                                : state === "near_delay"
-                                ? "bg-yellow-50 data-[highlighted]:bg-yellow-100 data-[state=checked]:bg-yellow-100"
-                                : "data-[highlighted]:bg-muted";
-                            return (
-                              <SelectItem key={eq.id} value={eq.equipment_number} className={itemClass}>
-                                {eq.equipment_number}
-                                {eq.name ? ` – ${eq.name}` : ""}
-                                {suffix}
-                              </SelectItem>
-                            );
-                          })}
+                        <SelectContent className="max-h-60 overflow-y-auto">
+                          {equipmentOptions.map((eq) => (
+                            <SelectItem key={eq.id} value={eq.equipment_number}>
+                              {eq.equipment_number}
+                              {eq.name ? ` – ${eq.name}` : ""}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>

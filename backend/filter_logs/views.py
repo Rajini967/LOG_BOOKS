@@ -6,12 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from accounts.permissions import CanApproveReports, CanLogEntries
-from core.log_slot_utils import (
-    get_interval_for_equipment,
-    get_slot_range,
-    get_tolerance_minutes_for_equipment,
-    compute_log_entry_window,
-)
+from core.log_slot_utils import get_interval_for_equipment, get_slot_range
 from reports.utils import log_limit_change
 
 from .models import FilterLog
@@ -63,33 +58,6 @@ class FilterLogViewSet(viewsets.ModelViewSet):
         validated = serializer.validated_data
         equipment_id = validated.get('equipment_id')
         timestamp = validated.get('timestamp') or timezone.now()
-
-        # Too-early enforcement (± tolerance window) based on last entry time + interval.
-        try:
-            last_log = (
-                FilterLog.objects.filter(equipment_id=equipment_id)
-                .exclude(timestamp__isnull=True)
-                .order_by("-timestamp")
-                .first()
-            )
-            if last_log and last_log.timestamp:
-                interval, shift_hours = get_interval_for_equipment(equipment_id or '', 'filter')
-                tolerance_minutes = get_tolerance_minutes_for_equipment(equipment_id or "", "filter")
-                window = compute_log_entry_window(last_log.timestamp, interval, shift_hours, tolerance_minutes)
-                if window:
-                    ts = timestamp
-                    if timezone.is_naive(ts):
-                        ts = timezone.make_aware(ts, timezone.get_current_timezone())
-                    if ts < window["start_window"]:
-                        start_str = timezone.localtime(window["start_window"]).strftime("%H:%M")
-                        raise ValidationError(
-                            {"detail": [f"Log entry is too early. Allowed entry time starts at {start_str}."]}
-                        )
-        except ValidationError:
-            raise
-        except Exception:
-            pass
-
         interval, shift_hours = get_interval_for_equipment(equipment_id or '', 'filter')
         slot_start, slot_end = get_slot_range(timestamp, interval, shift_hours)
         if FilterLog.objects.filter(

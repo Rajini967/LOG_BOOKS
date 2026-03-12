@@ -381,22 +381,6 @@ export default function ELogBookPage() {
   const [showMissedReadingPopup, setShowMissedReadingPopup] = useState(false);
   const [missedReadingNextDue, setMissedReadingNextDue] = useState<Date | null>(null);
   const [missedEquipments, setMissedEquipments] = useState<EquipmentMissInfo[] | null>(null);
-  const [scheduleStatusRows, setScheduleStatusRows] = useState<any[]>([]);
-  const [scheduleStatusLoading, setScheduleStatusLoading] = useState(false);
-  const delayedEquipmentIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const r of scheduleStatusRows || []) {
-      if (r?.state === 'delayed') {
-        const id = String(r?.equipment_number || r?.filter_id || r?.equipmentId || '');
-        if (id) ids.add(id);
-      }
-    }
-    return ids;
-  }, [scheduleStatusRows]);
-  const [earlyEntryPopup, setEarlyEntryPopup] = useState<{
-    open: boolean;
-    message: string;
-  }>({ open: false, message: "" });
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
   const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
   const [approvalComment, setApprovalComment] = useState('');
@@ -520,36 +504,6 @@ export default function ELogBookPage() {
     }
   }, [formData.equipmentType, logbookSchemas]);
 
-  // Load schedule status rows (interval/tolerance/window state) for the current log type
-  useEffect(() => {
-    const t = (formData.equipmentType || '').toString().toLowerCase();
-    if (t.startsWith('custom_')) {
-      setScheduleStatusRows([]);
-      return;
-    }
-    if (t !== 'chiller' && t !== 'boiler' && t !== 'chemical' && t !== 'filter') {
-      setScheduleStatusRows([]);
-      return;
-    }
-    let cancelled = false;
-    setScheduleStatusLoading(true);
-    equipmentAPI
-      .scheduledStatus(t as any)
-      .then((res: any) => {
-        if (cancelled) return;
-        setScheduleStatusRows(Array.isArray(res?.rows) ? res.rows : []);
-      })
-      .catch(() => {
-        if (!cancelled) setScheduleStatusRows([]);
-      })
-      .finally(() => {
-        if (!cancelled) setScheduleStatusLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [formData.equipmentType]);
-
   // After equipment selection, fetch previous readings with entered-by for that equipment (chiller/boiler/compressor)
   useEffect(() => {
     const eqId = formData.equipmentId;
@@ -610,58 +564,60 @@ export default function ELogBookPage() {
     };
   }, [formData.equipmentId, formData.equipmentType]);
 
-  // Equipment-wise delay popup based on tolerance-window status API
+  // Missed scheduled reading popup: when logs and session settings are ready, check if next due has passed (equipment-wise)
   useEffect(() => {
-    const t = (formData.equipmentType || '').toString().toLowerCase();
-    if (t !== 'chiller' && t !== 'boiler' && t !== 'chemical' && t !== 'filter') {
+    if (!sessionSettings?.log_entry_interval || logs.length === 0) return;
+    const chillerOptions = equipmentByType.chiller ?? [];
+    const metaByNumber = new Map<
+      string,
+      { log_entry_interval?: string | null; shift_duration_hours?: number | null }
+    >();
+    for (const e of chillerOptions) {
+      metaByNumber.set(e.equipment_number, {
+        log_entry_interval: e.log_entry_interval ?? null,
+        shift_duration_hours: e.shift_duration_hours ?? null,
+      });
+    }
+    const defaultInterval = sessionSettings.log_entry_interval as 'hourly' | 'shift' | 'daily';
+    const defaultShift = sessionSettings.shift_duration_hours ?? 8;
+
+    const resolveInterval = (equipmentId?: string): 'hourly' | 'shift' | 'daily' => {
+      const meta = equipmentId ? metaByNumber.get(equipmentId) : undefined;
+      return (meta?.log_entry_interval as 'hourly' | 'shift' | 'daily') || defaultInterval || 'daily';
+    };
+    const resolveShift = (equipmentId?: string): number => {
+      const meta = equipmentId ? metaByNumber.get(equipmentId) : undefined;
+      return meta?.shift_duration_hours ?? defaultShift;
+    };
+
+    const perEquipment = computeMissedByEquipment(
+      logs.map((l) => ({
+        equipment_id: l.equipmentId,
+        timestamp: l.timestamp,
+      })),
+      {
+        resolveInterval: (eqId) => resolveInterval(eqId),
+        resolveShiftHours: (eqId) => resolveShift(eqId),
+      },
+    );
+
+    const missedOnly = perEquipment.filter((m) => m.isMissed);
+    if (missedOnly.length > 0) {
+      setMissedEquipments(missedOnly);
+      // Use the earliest missed nextDue for the legacy description
+      const firstNext =
+        missedOnly
+          .map((m) => m.nextDue)
+          .filter((d): d is Date => !!d)
+          .sort((a, b) => a.getTime() - b.getTime())[0] || null;
+      setMissedReadingNextDue(firstNext);
+      setShowMissedReadingPopup(true);
+    } else {
       setMissedEquipments(null);
       setShowMissedReadingPopup(false);
       setMissedReadingNextDue(null);
-      return;
     }
-
-    const delayed = (scheduleStatusRows || []).filter((r: any) => r?.state === 'delayed');
-    if (delayed.length === 0) {
-      setMissedEquipments(null);
-      setShowMissedReadingPopup(false);
-      setMissedReadingNextDue(null);
-      return;
-    }
-
-    const list: EquipmentMissInfo[] = delayed.map((r: any) => {
-      const equipmentId = String(r.equipment_number || r.filter_id || r.equipmentId || '');
-      const equipmentName = r.name ? String(r.name) : undefined;
-      const lastTimestamp = r.last_entry ? new Date(r.last_entry) : null;
-      const expected = r.expected_entry ? new Date(r.expected_entry) : null;
-      const startWindow = r.start_window ? new Date(r.start_window) : null;
-      const endWindow = r.end_window ? new Date(r.end_window) : null;
-      const tol = typeof r.tolerance_minutes === 'number' ? r.tolerance_minutes : undefined;
-      const interval = (r.interval || 'hourly') as any;
-      const shiftHours = typeof r.shift_duration_hours === 'number' ? r.shift_duration_hours : 8;
-      return {
-        equipmentId,
-        equipmentName,
-        lastTimestamp,
-        nextDue: expected,
-        expectedTime: expected,
-        toleranceMinutes: tol,
-        startWindow,
-        endWindow,
-        isMissed: true,
-        interval,
-        shiftHours,
-      };
-    });
-
-    setMissedEquipments(list);
-    const firstExpected =
-      list
-        .map((m) => m.nextDue)
-        .filter((d): d is Date => !!d)
-        .sort((a, b) => a.getTime() - b.getTime())[0] || null;
-    setMissedReadingNextDue(firstExpected);
-    setShowMissedReadingPopup(true);
-  }, [scheduleStatusRows, formData.equipmentType]);
+  }, [logs, sessionSettings, equipmentByType]);
 
   // Refresh logs from API
   const refreshLogs = async () => {
@@ -891,32 +847,6 @@ export default function ELogBookPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Too-early enforcement (UI-side) using tolerance-window status
-    try {
-      const t = (formData.equipmentType || '').toString().toLowerCase();
-      const selectedIdentifier =
-        t === 'chemical'
-          ? ((formData.equipmentName || '').split(' – ')[0]?.trim() || formData.equipmentName || '')
-          : (formData.equipmentId || '');
-      if ((t === 'chiller' || t === 'boiler' || t === 'chemical' || t === 'filter') && selectedIdentifier) {
-        const row = (scheduleStatusRows || []).find((r: any) => {
-          const id = String(r?.equipment_number || r?.filter_id || '');
-          return id === selectedIdentifier;
-        });
-        if (row?.state === 'too_early') {
-          const start = row?.start_window ? new Date(row.start_window) : null;
-          const startStr = start && !Number.isNaN(start.getTime()) ? format(start, 'HH:mm') : 'the allowed window';
-          setEarlyEntryPopup({
-            open: true,
-            message: `Log entry is too early.\nAllowed entry time starts at ${startStr}.`,
-          });
-          return;
-        }
-      }
-    } catch {
-      // Ignore UI-side schedule validation errors; backend will enforce
-    }
     
     // Validate custom logbook fields if selected
     if (selectedSchema) {
@@ -1101,7 +1031,7 @@ export default function ELogBookPage() {
             toast.success('Chiller entry updated successfully');
           }
         } else if (!editingLogId) {
-          await chillerLogAPI.create(logData as any);
+          await chillerLogAPI.create(logData);
           toast.success('Chiller entry saved successfully');
         }
       }
@@ -1126,7 +1056,7 @@ export default function ELogBookPage() {
           });
         }
         
-        await boilerLogAPI.create(logData as any);
+        await boilerLogAPI.create(logData);
         toast.success('Boiler entry saved successfully');
       }
       // Handle compressor entries
@@ -1149,7 +1079,7 @@ export default function ELogBookPage() {
           });
         }
         
-        await compressorLogAPI.create(logData as any);
+        await compressorLogAPI.create(logData);
         toast.success('Compressor entry saved successfully');
       }
       
@@ -1601,30 +1531,11 @@ export default function ELogBookPage() {
         <MissedReadingPopup
           open={showMissedReadingPopup}
           onClose={() => { setShowMissedReadingPopup(false); setMissedReadingNextDue(null); setMissedEquipments(null); }}
-          logTypeLabel={(formData.equipmentType || 'Equipment').toString().replace(/^./, (c) => c.toUpperCase())}
+          logTypeLabel="Chiller"
           nextDue={missedReadingNextDue ?? undefined}
           equipmentList={missedEquipments ?? undefined}
         />
       )}
-
-      <AlertDialog
-        open={earlyEntryPopup.open}
-        onOpenChange={(open) => setEarlyEntryPopup((prev) => ({ ...prev, open }))}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Log entry is too early</AlertDialogTitle>
-            <AlertDialogDescription className="whitespace-pre-line">
-              {earlyEntryPopup.message}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setEarlyEntryPopup({ open: false, message: '' })}>
-              OK
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <div className="p-6 space-y-6">
         {/* Actions Bar */}
@@ -1974,54 +1885,24 @@ export default function ELogBookPage() {
                         <SelectTrigger>
                           <SelectValue placeholder="Select ID" />
                         </SelectTrigger>
-                        <SelectContent
-                          className="z-[9999] min-w-[340px] w-[var(--radix-select-trigger-width)]"
-                          position="popper"
-                          sideOffset={4}
-                        >
-                          {formData.equipmentType ? (() => {
-                            const options =
-                              equipmentByType[formData.equipmentType as keyof typeof equipmentByType] ?? [];
-                            if (options.length === 0) {
-                              return (
-                                <SelectItem value="__no_equipment__" disabled className="text-muted-foreground">
-                                  No equipment found. Add in Equipment Master.
-                                </SelectItem>
-                              );
-                            }
-                            const statusById = new Map<string, any>();
-                            for (const r of scheduleStatusRows || []) {
-                              const id = String(r?.equipment_number || r?.filter_id || "");
-                              if (id) statusById.set(id, r);
-                            }
-
-                            return options.map((eq) => {
-                              const st = statusById.get(eq.equipment_number);
-                              const state = String(st?.state || "");
-                              const suffix =
-                                state === "delayed"
-                                  ? " (Delayed)"
-                                  : state === "near_delay"
-                                  ? " (Near delay)"
-                                  : state === "too_early"
-                                  ? " (Too early)"
-                                  : "";
-                              const itemClass =
-                                state === "delayed"
-                                  ? "bg-red-50 data-[highlighted]:bg-red-100 data-[state=checked]:bg-red-100"
-                                  : state === "near_delay"
-                                  ? "bg-yellow-50 data-[highlighted]:bg-yellow-100 data-[state=checked]:bg-yellow-100"
-                                  : "data-[highlighted]:bg-muted";
-
-                              return (
-                                <SelectItem key={eq.id} value={eq.equipment_number} className={itemClass}>
+                        <SelectContent className="z-[100]" position="popper">
+                          {formData.equipmentType &&
+                            (() => {
+                              const options = equipmentByType[formData.equipmentType as keyof typeof equipmentByType] ?? [];
+                              if (options.length === 0) {
+                                return (
+                                  <SelectItem value="__no_equipment__" disabled className="text-muted-foreground">
+                                    No equipment found. Add in Equipment Master.
+                                  </SelectItem>
+                                );
+                              }
+                              return options.map((eq) => (
+                                <SelectItem key={eq.id} value={eq.equipment_number}>
                                   {eq.equipment_number}
-                                  {eq.name ? ` – ${eq.name}` : ""}
-                                  {suffix}
+                                  {eq.name ? ` – ${eq.name}` : ''}
                                 </SelectItem>
-                              );
-                            });
-                          })() : null}
+                              ));
+                            })()}
                         </SelectContent>
                       </Select>
                     </div>
@@ -3712,13 +3593,7 @@ export default function ELogBookPage() {
                   </tr>
                 ) : (
                   filteredLogs.map((log) => (
-                    <tr
-                      key={log.id}
-                      className={cn(
-                        "hover:bg-muted/30 transition-colors",
-                        delayedEquipmentIds.has(log.equipmentId) && "bg-red-50",
-                      )}
-                    >
+                    <tr key={log.id} className="hover:bg-muted/30 transition-colors">
                       <td className="px-4 py-3 align-middle">
                         {(log.status === 'pending' || log.status === 'draft' || log.status === 'pending_secondary_approval') &&
                         user?.role !== 'operator' &&

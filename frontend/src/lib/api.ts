@@ -172,7 +172,6 @@ export const authAPI = {
   updateSessionSettings: async (data: {
     auto_logout_minutes?: number;
     log_entry_interval?: 'hourly' | 'shift' | 'daily';
-    log_entry_tolerance_minutes?: number;
     shift_duration_hours?: number;
   }) => {
     const response = await api.patch('/settings/session/', data);
@@ -424,11 +423,6 @@ export const equipmentAPI = {
   approve: async (id: string, action: "approve" | "reject") => {
     const response = await api.post(`/equipment/${id}/approve/`, { action });
     return response.data;
-  },
-
-  scheduledStatus: async (log_type: 'chiller' | 'boiler' | 'filter' | 'chemical') => {
-    const response = await api.get('/equipment/scheduled_status/', { params: { log_type } });
-    return response.data as { log_type: string; rows: any[] };
   },
 };
 

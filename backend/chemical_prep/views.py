@@ -7,12 +7,7 @@ from datetime import datetime, timedelta
 import calendar
 from django.db import models
 from django.utils import timezone
-from core.log_slot_utils import (
-    get_interval_for_equipment,
-    get_slot_range,
-    get_tolerance_minutes_for_equipment,
-    compute_log_entry_window,
-)
+from core.log_slot_utils import get_interval_for_equipment, get_slot_range
 from .models import Chemical, ChemicalStock, ChemicalPreparation, ChemicalAssignment, ChemicalDashboardConfig
 from .serializers import (
     ChemicalSerializer,
@@ -206,33 +201,6 @@ class ChemicalPreparationViewSet(viewsets.ModelViewSet):
         validated = dict(serializer.validated_data)
         equipment_name = validated.get("equipment_name")
         timestamp = validated.get("timestamp") or timezone.now()
-
-        # Too-early enforcement (± tolerance window) based on last entry time + interval.
-        try:
-            last_log = (
-                ChemicalPreparation.objects.filter(equipment_name=equipment_name)
-                .exclude(timestamp__isnull=True)
-                .order_by("-timestamp")
-                .first()
-            )
-            if last_log and last_log.timestamp:
-                interval, shift_hours = get_interval_for_equipment(equipment_name or "", "chemical")
-                tolerance_minutes = get_tolerance_minutes_for_equipment(equipment_name or "", "chemical")
-                window = compute_log_entry_window(last_log.timestamp, interval, shift_hours, tolerance_minutes)
-                if window:
-                    ts = timestamp
-                    if timezone.is_naive(ts):
-                        ts = timezone.make_aware(ts, timezone.get_current_timezone())
-                    if ts < window["start_window"]:
-                        start_str = timezone.localtime(window["start_window"]).strftime("%H:%M")
-                        raise ValidationError(
-                            {"detail": [f"Log entry is too early. Allowed entry time starts at {start_str}."]}
-                        )
-        except ValidationError:
-            raise
-        except Exception:
-            pass
-
         if equipment_name is not None:
             interval, shift_hours = get_interval_for_equipment(equipment_name or "", "chemical")
             slot_start, slot_end = get_slot_range(timestamp, interval, shift_hours)

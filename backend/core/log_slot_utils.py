@@ -3,7 +3,7 @@ Utilities for computing log entry time slots from SessionSetting (hourly / shift
 Used to enforce one entry per equipment per slot and prevent duplicates.
 """
 from datetime import timedelta
-from typing import Tuple, Optional, TypedDict
+from typing import Tuple
 
 from django.utils import timezone
 
@@ -108,106 +108,3 @@ def get_interval_for_equipment(equipment_identifier: str, log_type: str) -> Tupl
     interval = getattr(setting, "log_entry_interval", None) or "hourly"
     shift_hours = getattr(setting, "shift_duration_hours", None) or 8
     return interval, shift_hours
-
-
-def get_tolerance_minutes_for_equipment(equipment_identifier: str, log_type: str) -> int:
-    """
-    Resolve tolerance minutes (± window) for an equipment identifier:
-    - If an Equipment record is resolved and has tolerance_minutes set, use it.
-    - Otherwise use SessionSetting.log_entry_tolerance_minutes.
-    """
-    setting = SessionSetting.get_solo()
-    default_tol = int(getattr(setting, "log_entry_tolerance_minutes", 0) or 0)
-
-    if not equipment_identifier or not isinstance(equipment_identifier, str):
-        return max(0, default_tol)
-
-    identifier = equipment_identifier.strip()
-    equipment = None
-
-    if log_type in ("chiller", "boiler"):
-        equipment = Equipment.objects.filter(equipment_number=identifier).first()
-    elif log_type == "filter":
-        fm = FilterMaster.objects.filter(filter_id=identifier).first()
-        if fm:
-            assignment = (
-                FilterAssignment.objects.filter(filter=fm, is_active=True)
-                .select_related("equipment")
-                .first()
-            )
-            if assignment:
-                equipment = assignment.equipment
-    elif log_type == "chemical":
-        part_before_dash = identifier.split(" – ")[0].strip() if " – " in identifier else identifier
-        equipment = Equipment.objects.filter(equipment_number=part_before_dash).first()
-        if not equipment:
-            equipment = Equipment.objects.filter(equipment_number=identifier).first()
-        if not equipment:
-            equipment = Equipment.objects.filter(name__iexact=identifier).first()
-
-    if equipment is not None:
-        tol = getattr(equipment, "tolerance_minutes", None)
-        if tol is not None:
-            try:
-                return max(0, int(tol))
-            except (TypeError, ValueError):
-                return max(0, default_tol)
-
-    return max(0, default_tol)
-
-
-def _interval_to_timedelta(interval: str, shift_duration_hours: int) -> timedelta:
-    interval = (interval or "").strip().lower() or "hourly"
-    if interval == "daily":
-        return timedelta(days=1)
-    if interval == "shift":
-        hours = shift_duration_hours if shift_duration_hours is not None else 8
-        if hours < 1:
-            hours = 8
-        return timedelta(hours=hours)
-    # hourly default
-    return timedelta(hours=1)
-
-
-class LogEntryWindow(TypedDict):
-    expected_time: timezone.datetime
-    start_window: timezone.datetime
-    end_window: timezone.datetime
-
-
-def compute_log_entry_window(
-    last_entry_time,
-    interval: str,
-    shift_duration_hours: int,
-    tolerance_minutes: int,
-) -> Optional[LogEntryWindow]:
-    """
-    Compute the allowed entry window for the next log after last_entry_time.
-
-    expected_time = last_entry_time + interval_delta
-    start_window = expected_time - tolerance
-    end_window = expected_time + tolerance
-    """
-    if last_entry_time is None:
-        return None
-    ts = last_entry_time
-    if timezone.is_naive(ts):
-        ts = timezone.make_aware(ts, timezone.get_current_timezone())
-
-    delta = _interval_to_timedelta(interval, shift_duration_hours)
-    expected = ts + delta
-
-    tol = tolerance_minutes if tolerance_minutes is not None else 0
-    try:
-        tol = int(tol)
-    except (TypeError, ValueError):
-        tol = 0
-    if tol < 0:
-        tol = 0
-
-    tol_delta = timedelta(minutes=tol)
-    return {
-        "expected_time": expected,
-        "start_window": expected - tol_delta,
-        "end_window": expected + tol_delta,
-    }
