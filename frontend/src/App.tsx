@@ -37,6 +37,7 @@ import ReportsPage from "./pages/ReportsPage";
 import TrendsPage from "./pages/TrendsPage";
 import UsersPage from "./pages/UsersPage";
 import SettingsPage from "./pages/SettingsPage";
+import ConsumptionLogBookPage from "./pages/ConsumptionLogBookPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import LogbookBuilderPage from "./pages/LogbookBuilderPage";
 import NotFound from "./pages/NotFound";
@@ -108,6 +109,7 @@ const App = () => (
               <Route path="/e-log-book/filter/settings/categories" element={<FilterCategoriesPage />} />
               <Route path="/e-log-book/filter/settings/register" element={<FilterRegisterPage />} />
               <Route path="/e-log-book/filter/settings/schedules" element={<FilterScheduleApprovalsPage />} />
+              <Route path="/e-log-book/consumption" element={<ConsumptionLogBookPage />} />
               <Route path="/hvac-validation" element={<HVACValidationPage />} />
               <Route path="/hvac-validation/air-velocity-test" element={<AirVelocityTestPage />} />
               <Route path="/hvac-validation/filter-integrity-test" element={<FilterIntegrityTestPage />} />
